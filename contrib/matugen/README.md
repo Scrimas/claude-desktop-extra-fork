@@ -10,7 +10,7 @@
    input_path = '~/.config/matugen/templates/claude-desktop-overlay.json'
    output_path = '~/.config/Claude/themes.d/wallpaper-accent.json'
    ```
-2. Make your wallpaper tool's post-change command `~/.config/matugen/set-mode-from-wallpaper.sh "$WALLPAPER"`. It measures the image's mean luma (light above 0.6, `CDB_MODE_THRESHOLD` overrides), runs `matugen image -m <mode>` and sets the desktop-wide light/dark preference (gsettings color-scheme, adw-gtk3 variant on XFCE). Prefer a fixed mode and an untouched desktop preference? Use `matugen image "$WALLPAPER" -m dark` there instead.
+2. Make your wallpaper tool's post-change command `~/.config/matugen/set-mode-from-wallpaper.sh "$WALLPAPER"`. It measures the image's mean luma (light above 0.6, `CDB_MODE_THRESHOLD` overrides; `CDB_MODE=dark` or `light` pins the mode and skips the measurement). In dark mode, very pale wallpapers automatically fall back from `scheme-fidelity` to `scheme-tonal-spot` so they keep a real accent color (`CDB_PASTEL_LIMIT`, default 0.75), runs `matugen image -m <mode>` and sets the desktop-wide light/dark preference (gsettings color-scheme, adw-gtk3 variant on XFCE). Prefer a fixed mode and an untouched desktop preference? Use `matugen image "$WALLPAPER" -m dark` there instead.
 3. Put `"themeOverlay": "wallpaper-accent"` into `~/.config/Claude/claude-desktop-extra.jsonc`.
 4. Set Claude Desktop Settings -> Appearance -> System and pick any theme in the Ctrl+Shift+T picker. Which palette the app shows is Anthropic's own Appearance setting, not something our config can drive; System is the only value that follows the desktop preference. Keep Dark or Light for a fixed mode (then use the plain `matugen image ... -m dark` line instead of the script).
 

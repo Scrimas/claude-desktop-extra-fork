@@ -2,6 +2,19 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-09-27
+
+### matugen recipe: pin dark/light, pale-wallpaper fallback
+
+- `contrib/matugen/set-mode-from-wallpaper.sh` takes `CDB_MODE=auto|dark|light`.
+  `auto` (default) keeps the luma detection. `dark`/`light` pins the mode, so a
+  bright wallpaper no longer flips the desktop to light while the colors still
+  follow the wallpaper.
+- In dark mode, very pale wallpapers used to get a light primary container and a
+  pure white accent from `scheme-fidelity`. They now fall back to `scheme-tonal-spot`
+  automatically (`CDB_PASTEL_LIMIT`, default 0.75; skipped when
+  `CDB_MATUGEN_SCHEME` is set). See [Themes](docs/themes.md).
+
 ## 2026-09-25
 
 ### Launcher: persistent Electron flags file

@@ -17,6 +17,9 @@
 #     ~/.config/matugen/set-mode-from-wallpaper.sh "$WP"
 # and set Claude Desktop Settings -> Appearance -> System. If you do not want the desktop-wide
 # preference changed, keep a fixed-mode `matugen image "$WP" -m dark -q` line instead.
+# To keep the wallpaper-derived colors but never leave dark (or light) mode, pin it:
+#     CDB_MODE=dark ~/.config/matugen/set-mode-from-wallpaper.sh "$WP"
+# CDB_MODE=auto (default) follows the wallpaper luma; dark|light skips the measurement.
 # Needs: matugen, imagemagick (magick).
 set -u
 
@@ -26,6 +29,11 @@ if [ -z "$wp" ] || [ ! -r "$wp" ]; then
   exit 2
 fi
 threshold="${CDB_MODE_THRESHOLD:-0.6}"
+pin="${CDB_MODE:-auto}"
+case "$pin" in
+  auto|dark|light) ;;
+  *) echo "set-mode-from-wallpaper: CDB_MODE must be auto, dark or light (got '$pin')" >&2; exit 2 ;;
+esac
 
 # matugen decodes raster formats only; rasterize anything else (SVG, ...) to a temp PNG.
 case "${wp,,}" in
@@ -37,18 +45,41 @@ case "${wp,,}" in
     ;;
 esac
 
-luma="$(magick "$wp" -resize '1x1!' -colorspace gray -format '%[fx:mean]' info: 2>/dev/null)"
-if [ -z "$luma" ]; then
-  echo "set-mode-from-wallpaper: could not measure $wp (is imagemagick installed?)" >&2
-  exit 1
+if [ "$pin" = auto ]; then
+  luma="$(magick "$wp" -resize '1x1!' -colorspace gray -format '%[fx:mean]' info: 2>/dev/null)"
+  if [ -z "$luma" ]; then
+    echo "set-mode-from-wallpaper: could not measure $wp (is imagemagick installed?)" >&2
+    exit 1
+  fi
+  if awk -v l="$luma" -v t="$threshold" 'BEGIN { exit !(l > t) }'; then mode=light; else mode=dark; fi
+  echo "set-mode-from-wallpaper: luma=$luma threshold=$threshold -> $mode"
+else
+  mode="$pin"
+  echo "set-mode-from-wallpaper: CDB_MODE=$pin -> $mode"
 fi
-if awk -v l="$luma" -v t="$threshold" 'BEGIN { exit !(l > t) }'; then mode=light; else mode=dark; fi
-echo "set-mode-from-wallpaper: luma=$luma threshold=$threshold -> $mode"
 
 # scheme-fidelity keeps the wallpaper's own chroma: a grey wallpaper gives grey-blue surfaces,
 # a colorful one stays colorful. matugen's default (scheme-tonal-spot) forces a fixed high
 # chroma, which turns near-grey wallpapers into saturated blue. Override with CDB_MATUGEN_SCHEME.
-matugen image "$wp" -m "$mode" -t "${CDB_MATUGEN_SCHEME:-scheme-fidelity}" -q
+scheme="${CDB_MATUGEN_SCHEME:-scheme-fidelity}"
+
+# Pale wallpapers in dark mode: fidelity/content give primary_container the source color's own
+# (high) tone, so the container comes out light (#cbe6fa from a pale sky) and primary/tertiary
+# are pushed to #ffffff to keep contrast - no accent left. Measured: normal wallpapers stay at
+# container lightness <= 0.65, pale ones hit 0.87+. Above CDB_PASTEL_LIMIT (0.75) fall back to
+# scheme-tonal-spot, which pins dark-mode tones (container ~0.2, primary a real pastel accent).
+# Only when the scheme was not chosen explicitly; needs python3, skipped without it.
+if [ "$mode" = dark ] && [ -z "${CDB_MATUGEN_SCHEME:-}" ] && command -v python3 >/dev/null 2>&1; then
+  pc_l="$(matugen image "$wp" -m dark -t "$scheme" --dry-run -j hex -q 2>/dev/null | python3 -c '
+import colorsys, json, sys
+h = json.load(sys.stdin)["colors"]["primary_container"]["dark"]["color"].lstrip("#")
+print(round(colorsys.rgb_to_hls(*(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)))[1], 3))' 2>/dev/null)"
+  if [ -n "$pc_l" ] && awk -v l="$pc_l" -v t="${CDB_PASTEL_LIMIT:-0.75}" 'BEGIN { exit !(l > t) }'; then
+    echo "set-mode-from-wallpaper: pale source (primary_container lightness $pc_l) -> scheme-tonal-spot"
+    scheme=scheme-tonal-spot
+  fi
+fi
+matugen image "$wp" -m "$mode" -t "$scheme" -q
 
 if command -v gsettings >/dev/null 2>&1; then
   gsettings set org.gnome.desktop.interface color-scheme "prefer-$mode" 2>/dev/null || true
