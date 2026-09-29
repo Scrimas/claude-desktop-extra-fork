@@ -85,7 +85,7 @@ proc apply*(input: string): string =
     # Chrome+Edge entries. Quoting is backticks since v1.26832.0 and the module
     # accessors are dotted (`q.default.homedir()`, `W.default.join`).
     let patternBC =
-      re2"""(function [\w$]+\(\)\{[\w$]+(?:\.[\w$]+)*\.homedir\(\);\{(?:const|let|var) )([\w$]+)(=[\w$]+(?:\.[\w$]+)*\(\);return\[)(\{name:["`]Chrome["`],path:([\w$]+(?:\.[\w$]+)*)\.join\([\w$]+,["`]google-chrome["`]\)\},\{name:["`]Edge["`],path:[\w$]+(?:\.[\w$]+)*\.join\([\w$]+,["`]microsoft-edge["`]\)\})(\])"""
+      re2"""(function [\w$]+\(\)\{[\w$]+(?:\.[\w$]+)*\.homedir\(\);\{(?:const|let|var) )([\w$]+)(=[\w$]+(?:\.[\w$]+)*\(\);return\[)(\{name:["`]Chrome["`],path:([\w$]+(?:\.[\w$]+)*)\.join\([\w$]+,["`]google-chrome["`]\)\},\{name:["`]Edge["`],path:[\w$]+(?:\.[\w$]+)*\.join\([\w$]+,["`]microsoft-edge["`]\)\})((?:,\{name:["`][^"`]+["`],path:[^{}]*\})*)(\])"""
     let sitesBC = result.findAll(patternBC).len
     if sitesBC != 1:
       echo "  [FAIL] Browser list (xSA): " & $sitesBC & " sites, expected 1"
@@ -104,7 +104,8 @@ proc apply*(input: string): string =
           ",\"BraveSoftware\",\"Brave-Browser\")}" & ",{name:\"Vivaldi\",path:" & joinVar &
           ".join(" & cfgVar & ",\"vivaldi\")}" & ",{name:\"Opera\",path:" & joinVar &
           ".join(" & cfgVar & ",\"opera\")}"
-        head & cfgVar & mid & chromeEdge & extra & s[m.group(5)],
+        # v2.9939.0 appended upstream entries (Prisma) after Edge; keep them.
+        head & cfgVar & mid & chromeEdge & extra & s[m.group(5)] & s[m.group(6)],
     )
     if countBC == 1:
       echo &"  [OK] Browser list (xSA): extended to 6 browsers (Chromium/Brave/Vivaldi/Opera added) ({countBC} match)"

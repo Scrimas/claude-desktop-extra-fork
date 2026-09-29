@@ -157,6 +157,9 @@ function evalFixture(src, { platform, env, dark = true, nativeTb, noWinCtl } = {
     u5t: BLENDED,
     yP: () => WINDOW_BG,
     o: { nativeTheme: { shouldUseDarkColors: dark } },
+    // the injected overlay reads nativeTheme via require("electron"), never
+    // through a captured alias (a cross-chunk capture crashed v2.9939.4)
+    require: (m) => (m === "electron" ? { nativeTheme: { shouldUseDarkColors: dark } } : undefined),
     // main-window options environment
     U9t: () => ({ x: 0, y: 0 }),
     p3r: () => "/opt/claude/resources",
