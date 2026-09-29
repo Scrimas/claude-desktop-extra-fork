@@ -2,6 +2,17 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-09-28
+
+### Upstream 2.9939.4
+
+- `fix_browser_tools_linux`: the native browser list gained a Prisma Access
+  Browser entry after Edge; the patch keeps it and still appends
+  Chromium/Brave/Vivaldi/Opera.
+- `fix_computer_use_linux`: the Computer Use server's `isEnabled` now also
+  checks `!cliInSandboxVm` on the ccd branch; the handleToolCall anchor
+  accepts it.
+
 ## 2026-09-27
 
 ### matugen recipe: pin dark/light, pale-wallpaper fallback

@@ -668,8 +668,9 @@ proc apply*(input: string): string =
     # return(t,r)=>Cn.handleToolCall(n,t,r,e)}`, so the signature is
     # `(state, toolName, input, session)`. The dispatcher moved onto that state
     # and is memoized there: `let o=e.dispatch??=xn(i,e.altToolModeCalls)`.
+    # v2.9939.0 added `&&!e.cliInSandboxVm` to the ccd branch of isEnabled.
     let htcStart =
-      re"""(([\w$]+)=\{[^{}]{0,80}isEnabled:[\w$]+=>(?:[\w$]+\.sessionType===["`]ccd["`]\?[\w$]+(?:\.[\w$]+)?\(\):[\w$]+(?:\.[\w$]+)?\(\)|[\w$]+\(\)),handleToolCall:async\(([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)=>\{)"""
+      re"""(([\w$]+)=\{[^{}]{0,80}isEnabled:[\w$]+=>(?:[\w$]+\.sessionType===["`]ccd["`]\?[\w$]+(?:\.[\w$]+)?\(\)(?:&&![\w$]+\.[\w$]+)?:[\w$]+(?:\.[\w$]+)?\(\)|[\w$]+\(\)),handleToolCall:async\(([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)=>\{)"""
     let maybeHtc = content.find(htcStart)
     if maybeHtc.isNone:
       echo "  [FAIL] handleToolCall pattern: 0 matches"
