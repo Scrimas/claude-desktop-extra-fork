@@ -121,10 +121,8 @@ proc apply*(input: string): string =
 
   # Anthropic identifiers (minified, renamed between releases):
   #   bgFn      e.g. "G$" / "T.r" -- window background color, called as bgFn().
-  #   electron  e.g. "cA" / "R"   -- alias for require("electron"), used for
-  #                                  nativeTheme.shouldUseDarkColors.
-  # Both are captured from the main-window options site, which since v1.26832.0
-  # lives in index.js itself; they are only ever emitted back into that same
+  # bgFn is captured from the main-window options site, which since v1.26832.0
+  # lives in index.js itself; it is only ever emitted back into that same
   # site (patch 1). Patch 2 may sit in a *different* code-split chunk (it did
   # v1.26832.0-v1.30096.1) and captures its own local background helper --
   # see there.
@@ -132,9 +130,11 @@ proc apply*(input: string): string =
     re2"""backgroundColor:([\w$]+(?:\.[\w$]+)*)\(\),opacity:""",
     "backgroundColor function",
   )
-  let electron = result.capture(
-    re2"""([\w$]+)\.nativeTheme\.shouldUseDarkColors""", "electron alias"
-  )
+  # The electron alias is NOT captured: the first `X.nativeTheme` in the staged
+  # stub+chunks file can live in another chunk with a different alias (v2.9939.4
+  # captured `i` while the options site uses `a` -> TypeError, no window).
+  # require("electron") is always valid in the main process.
+  let electron = "require(\"electron\")"
 
   # Patch 1: main BrowserWindow options. We splice six runtime-conditional
   # options into the existing comma-list right after titleBarOverlay:

@@ -12,6 +12,11 @@ All notable changes to the claude-desktop-extra packages will be documented in t
 - `fix_computer_use_linux`: the Computer Use server's `isEnabled` now also
   checks `!cliInSandboxVm` on the ccd branch; the handleToolCall anchor
   accepts it.
+- `fix_native_frame`: the integrated title bar's overlay read `nativeTheme`
+  through an Electron alias captured from a different code-split chunk. On
+  2.9939.4 that alias was undefined at the window site, so the main window
+  never opened (`reading 'shouldUseDarkColors'`). It now uses
+  `require("electron")` directly.
 
 ## 2026-09-27
 
