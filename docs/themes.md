@@ -134,7 +134,7 @@ Template values are HSL triplets built from matugen's `.hue`/`.saturation`/`.lig
 - **Hide window controls** in Settings -> Extra -> Community Features removes the frame entirely by dropping the min/max/close buttons (you then close and minimize through your WM). Window edges still resize normally. Also `claude-desktop --no-window-controls` for a single launch.
 - **Native titlebar**, in the same place, uses the system frame instead of the integrated titlebar. Also `claude-desktop --native-titlebar`.
 
-Both are read when the main window is created, so they take effect on the next start; the panel shows a restart bar while a saved switch and the running window disagree.
+Both are read when the main window is created, so they take effect on the next start; the panel shows a restart bar while a saved switch and the running window disagree. In both modes the header's icons move up to the window edge instead of leaving room for the buttons.
 
 Maximizing the window also makes the band disappear on its own.
 

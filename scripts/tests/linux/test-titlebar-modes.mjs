@@ -283,6 +283,100 @@ function fmtSaved(v) {
   return v === undefined ? "absent" : String(v);
 }
 
+// ------------------------------------------------- the page-side inset fix
+// Section [15]. Without the controls overlay (native and bare mode) claude.ai's
+// env(titlebar-area-*) fallbacks reserve 120px for buttons that do not exist;
+// js/window_controls_page.js rewrites those fallbacks. It touches the DOM only
+// through getAttribute/setAttribute/querySelectorAll and one MutationObserver,
+// so a small fake is enough to drive it in a vm.
+const PAGE_SRC_FILE = readFileSync(join(ROOT, "js", "window_controls_page.js"), "utf8");
+const WC_PATCH_BIN = join(ROOT, "patches", "community", "add_feature_window_controls");
+
+class FakeEl {
+  constructor(style = null, children = []) {
+    this.nodeType = 1;
+    this.attrs = style === null ? {} : { style };
+    this.children = children;
+    this.sets = 0;
+  }
+  getAttribute(n) {
+    return n in this.attrs ? this.attrs[n] : null;
+  }
+  setAttribute(n, v) {
+    this.attrs[n] = String(v);
+    this.sets++;
+  }
+  // Only the one selector the page script uses: [style*="titlebar-area"].
+  querySelectorAll() {
+    const out = [];
+    const walk = (e) => {
+      for (const c of e.children) {
+        if ((c.attrs.style || "").includes("titlebar-area")) out.push(c);
+        walk(c);
+      }
+    };
+    walk(this);
+    return out;
+  }
+}
+
+function loadPage(src, root) {
+  const observers = [];
+  const sandbox = {
+    document: { documentElement: root },
+    MutationObserver: class {
+      constructor(cb) {
+        this.cb = cb;
+        observers.push(this);
+      }
+      observe(target, opts) {
+        this.target = target;
+        this.opts = opts;
+      }
+    },
+  };
+  sandbox.window = sandbox;
+  const ctx = vm.createContext(sandbox);
+  vm.runInContext(src, ctx);
+  return { sandbox, ctx, observers };
+}
+
+// Upstream's own shapes (ion-dist mirror of the claude.ai SPA, v2.9939.4):
+// Sx(e,rtl,n) gives LTR {x:"0px", width:`calc(n - e px)`} and RTL
+// {x:`e px`, width:`calc(n - 2e px)`}; e is 120 on Linux, ceil(120/zoom) in
+// some callers.
+const GAP = {
+  header:
+    "padding-left: calc(16px + max(0px, env(titlebar-area-x, 0px))); " +
+    "padding-right: calc(16px + max(0px, 100% - env(titlebar-area-x, 0px) - " +
+    "env(titlebar-area-width, calc(100% - 120px))));",
+  chromeBar:
+    "padding-right: calc(var(--df-chrome-bar-end-gutter, 12px) + max(0px, 100% - " +
+    "env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100% - 120px))));",
+  rtlZoomed:
+    "--cap-first: max(0px, 100vw - env(titlebar-area-x, 96px) - " +
+    "env(titlebar-area-width, calc(100vw - 192px))); --cap-last: env(titlebar-area-x, 96px);",
+  compact: "padding-right:calc(16px + max(0px,100% - env(titlebar-area-x,0px) - env(titlebar-area-width,calc(100% - 120px))))",
+};
+const FIXED = {
+  header:
+    "padding-left: calc(16px + max(0px, env(titlebar-area-x, 0px))); " +
+    "padding-right: calc(16px + max(0px, 100% - env(titlebar-area-x, 0px) - " +
+    "env(titlebar-area-width, 100%)));",
+  chromeBar:
+    "padding-right: calc(var(--df-chrome-bar-end-gutter, 12px) + max(0px, 100% - " +
+    "env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%)));",
+  rtlZoomed:
+    "--cap-first: max(0px, 100vw - env(titlebar-area-x, 0px) - " +
+    "env(titlebar-area-width, 100vw)); --cap-last: env(titlebar-area-x, 0px);",
+  compact: "padding-right:calc(16px + max(0px,100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%)))",
+};
+const UNTOUCHED = [
+  "--df-popout-caption-height: env(titlebar-area-height, 36px);",
+  "top: var(--desktop-titlebar-inset, 0px); padding-top: env(safe-area-inset-top, 0px);",
+  "width: calc(100% - 120px);",
+];
+
 // The injection the TWO-mode patch used to emit, reconstructed. `frame` and
 // `titleBarStyle` look right, so nothing downstream would notice - the only
 // thing missing is the bare-mode arm. It carries no CLAUDE_NO_WINDOW_CONTROLS,
@@ -1178,6 +1272,105 @@ try {
         sandbox[mode.global](),
         false
       );
+    }
+  }
+
+  // ------------------------------------------------- [15] the inset fix
+  section("[15] no overlay -> claude.ai's window-controls gap is closed");
+  {
+    // Gate: inject only when the RUNNING window was built without the overlay.
+    // Reads the memo, never calls a mode function.
+    const gate = (env, ask) => {
+      const { sandbox } = loadPref({ env, config: {} });
+      ask(sandbox);
+      return sandbox.__cdbWinCtlPref.withoutOverlay();
+    };
+    check("gate: no window built yet -> no injection", gate({}, () => {}), false);
+    check(
+      "gate: integrated window (both asked, both false) -> no injection",
+      gate({}, (s) => (s.__cdbNativeTb(), s.__cdbNoWinCtl())),
+      false
+    );
+    check(
+      "gate: bare window -> inject",
+      gate({ CLAUDE_NO_WINDOW_CONTROLS: "1" }, (s) => (s.__cdbNativeTb(), s.__cdbNoWinCtl())),
+      true
+    );
+    check(
+      "gate: native window (bare never asked, short-circuit) -> inject",
+      gate({ CLAUDE_NATIVE_TITLEBAR: "1" }, (s) => s.__cdbNativeTb()),
+      true
+    );
+    {
+      const { sandbox } = loadPref({ config: {} });
+      check("gate: does not call the mode functions", sandbox.__cdbWinCtlPref.withoutOverlay(), false);
+      check("gate: memo left untouched", Object.keys(sandbox.__cdbWinCtlMemo).length, 0);
+    }
+
+    // The rewrite itself, on upstream's shapes.
+    const { sandbox: pg } = loadPage(PAGE_SRC_FILE, new FakeEl());
+    const rw = pg.__cdbWcoInset.rewrite;
+    for (const k of Object.keys(GAP)) {
+      check(`rewrite: ${k}`, rw(GAP[k]), FIXED[k]);
+      check(`rewrite: ${k} is stable on a second pass`, rw(rw(GAP[k])), FIXED[k]);
+    }
+    for (const s of UNTOUCHED) check(`rewrite leaves alone: ${s}`, rw(s), s);
+
+    // DOM wiring.
+    const kept = new FakeEl("color: red;");
+    const nested = new FakeEl(GAP.header);
+    const root = new FakeEl(null, [kept, new FakeEl(null, [nested])]);
+    const { sandbox, ctx, observers } = loadPage(PAGE_SRC_FILE, root);
+    check("dom: initial scan fixes a nested element", nested.getAttribute("style"), FIXED.header);
+    check("dom: unrelated style never written", kept.sets, 0);
+    check("dom: one observer", observers.length, 1);
+    const o = observers[0];
+    check("dom: observes the document root", o.target === root, true);
+    check(
+      "dom: watches style attributes + inserted subtrees",
+      JSON.stringify([o.opts.subtree, o.opts.childList, o.opts.attributes, o.opts.attributeFilter]),
+      JSON.stringify([true, true, true, ["style"]])
+    );
+    // React re-sets the upstream value -> attribute record -> rewritten once;
+    // our own write's record must not write again.
+    nested.attrs.style = GAP.chromeBar;
+    nested.sets = 0;
+    o.cb([{ type: "attributes", target: nested }]);
+    o.cb([{ type: "attributes", target: nested }]);
+    check("dom: attribute change rewritten", nested.getAttribute("style"), FIXED.chromeBar);
+    check("dom: own write does not loop", nested.sets, 1);
+    // A subtree built detached and inserted carries its styles already.
+    const deep = new FakeEl(GAP.rtlZoomed);
+    const added = new FakeEl(GAP.header, [new FakeEl(null, [deep])]);
+    o.cb([{ type: "childList", addedNodes: [added, { nodeType: 3 }] }]);
+    check("dom: inserted node rewritten", added.getAttribute("style"), FIXED.header);
+    check("dom: inserted descendant rewritten", deep.getAttribute("style"), FIXED.rtlZoomed);
+    // dom-ready fires again on reload only, but a second injection into the
+    // same document must not stack observers.
+    vm.runInContext(PAGE_SRC_FILE, ctx);
+    check("dom: re-injection is a no-op", observers.length, 1);
+    check("dom: surface exposed once", typeof sandbox.__cdbWcoInset.fixElement, "function");
+
+    // The community patch embeds the page as a JS string literal; prove the
+    // escaping round-trips to the same source.
+    let wcBin = true;
+    try {
+      accessSync(WC_PATCH_BIN, constants.X_OK);
+    } catch {
+      wcBin = false;
+    }
+    if (!wcBin) {
+      console.log("  NOTE add_feature_window_controls not compiled - embed round-trip not checked");
+    } else {
+      const f = join(scratch, "wc-embed.js");
+      writeFileSync(f, '"use strict";void 0;');
+      execFileSync(WC_PATCH_BIN, [f], { stdio: "pipe" });
+      const out = readFileSync(f, "utf8");
+      const m = out.match(/var PAGE_SRC = ("(?:[^"\\]|\\.)*");/);
+      check("embed: PAGE_SRC literal found in the patched bundle", !!m, true);
+      if (m) {
+        check("embed: literal decodes to js/window_controls_page.js", JSON.parse(m[1]) === PAGE_SRC_FILE, true);
+      }
     }
   }
 

@@ -2,6 +2,14 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-10-02
+
+- `add_feature_window_controls`: with **Hide window controls** or **Native
+  titlebar** on, claude.ai's header no longer leaves a 120 px gap where the
+  window buttons used to be. The page reserves that room through
+  `env(titlebar-area-*)` fallbacks that only apply without the controls
+  overlay; a page script now rewrites them to zero.
+
 ## 2026-09-28
 
 ### Upstream 2.9939.4
