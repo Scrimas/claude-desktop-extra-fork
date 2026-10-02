@@ -15,6 +15,15 @@ All notable changes to the claude-desktop-extra packages will be documented in t
   titlebar** on, the claude.ai header no longer leaves a 120 px gap where the
   window buttons used to be.
 
+### AUR .SRCINFO complete again
+
+- The AUR `.SRCINFO` was missing `install`, `optdepends` (incl. the per-arch
+  ones), `provides`, `conflicts`, `replaces` and `options`, so the AUR page
+  and helpers (yay, pikaur) showed incomplete metadata and could not see the
+  conflict with `claude-desktop` before building. CI now generates it with
+  `makepkg --printsrcinfo` and fails the build if it drifts from the
+  PKGBUILD. The built packages were never affected.
+
 ## 2026-09-28
 
 ### Upstream 2.9939.4

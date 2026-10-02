@@ -1558,52 +1558,23 @@ jobs:
 
       - name: Generate .SRCINFO
         run: |
-          cat << 'EOF' > generate-srcinfo.sh
-          #!/bin/bash
-          source PKGBUILD
-
-          echo "pkgbase = ${pkgname}"
-          echo -e "\tpkgdesc = ${pkgdesc}"
-          echo -e "\tpkgver = ${pkgver}"
-          echo -e "\tpkgrel = ${pkgrel}"
-          echo -e "\turl = ${url}"
-
-          for a in "${arch[@]}"; do
-            echo -e "\tarch = ${a}"
-          done
-
-          echo -e "\tlicense = ${license[0]}"
-
-          for dep in "${makedepends[@]}"; do
-            echo -e "\tmakedepends = ${dep}"
-          done
-
-          for dep in "${depends[@]}"; do
-            echo -e "\tdepends = ${dep}"
-          done
-
-          for src in "${source_x86_64[@]}"; do
-            echo -e "\tsource_x86_64 = ${src}"
-          done
-
-          for sum in "${sha256sums_x86_64[@]}"; do
-            echo -e "\tsha256sums_x86_64 = ${sum}"
-          done
-
-          for src in "${source_aarch64[@]}"; do
-            echo -e "\tsource_aarch64 = ${src}"
-          done
-
-          for sum in "${sha256sums_aarch64[@]}"; do
-            echo -e "\tsha256sums_aarch64 = ${sum}"
-          done
-
-          echo ""
-          echo "pkgname = ${pkgname}"
-          EOF
-
-          bash generate-srcinfo.sh > .SRCINFO
-          rm generate-srcinfo.sh
+          # makepkg is the single source of truth for .SRCINFO: every PKGBUILD
+          # field (install, optdepends_<arch>, provides, conflicts, replaces,
+          # options, ...) lands in it without a hand-maintained whitelist.
+          # --printsrcinfo only sources the PKGBUILD (no download), so it works
+          # before the release assets exist. makepkg refuses to run as root.
+          docker run --rm \
+            -v "$(pwd):/input:ro" \
+            archlinux:base-devel \
+            bash -c '
+              set -euo pipefail
+              useradd -m builder
+              install -d -o builder -g builder /tmp/srcinfo
+              install -o builder -g builder -m 644 /input/PKGBUILD /input/claude-desktop-extra.install /tmp/srcinfo/
+              cd /tmp/srcinfo
+              su builder -c "makepkg --printsrcinfo"
+            ' > .SRCINFO
+          test -s .SRCINFO
           cat .SRCINFO
 
       - name: Upload PKGBUILD artifacts
@@ -1670,6 +1641,43 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: pkgbuild
+
+      # Runs BEFORE the build step rewrites sources/sums in PKGBUILD, so it
+      # compares the published .SRCINFO against the pristine PKGBUILD.
+      - name: Verify .SRCINFO matches makepkg --printsrcinfo
+        if: matrix.arch == 'x86_64'
+        run: |
+          docker run --rm \
+            -v "$(pwd):/input:ro" \
+            archlinux:base-devel \
+            bash -c '
+              set -euo pipefail
+              useradd -m builder
+              install -d -o builder -g builder /tmp/srcinfo
+              install -o builder -g builder -m 644 /input/PKGBUILD /input/claude-desktop-extra.install /tmp/srcinfo/
+              cd /tmp/srcinfo
+              su builder -c "makepkg --printsrcinfo"
+            ' > srcinfo.expected
+          if ! diff -u srcinfo.expected .SRCINFO; then
+            echo "::error::.SRCINFO is out of sync with PKGBUILD (diff above)"
+            exit 1
+          fi
+          # Positive assertions: a partial or empty file must fail loud.
+          for field in \
+            $'\tinstall = claude-desktop-extra.install' \
+            $'\tconflicts = claude-desktop' \
+            $'\tprovides = ' \
+            $'\toptdepends_x86_64 = ' \
+            $'\toptdepends_aarch64 = ' \
+            $'\tsource_x86_64 = ' \
+            'pkgname = claude-desktop-extra'; do
+            if ! grep -qF -- "$field" .SRCINFO; then
+              echo "::error::.SRCINFO lacks '${field}'"
+              exit 1
+            fi
+          done
+          echo ".SRCINFO matches makepkg --printsrcinfo"
+          rm srcinfo.expected
 
       - name: Build package with makepkg (${{ matrix.arch }}, cross-device build dir)
         env:
