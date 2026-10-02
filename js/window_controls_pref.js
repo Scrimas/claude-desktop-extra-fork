@@ -195,6 +195,16 @@
     return memoized(mode.key);
   }
 
+  // Whether the RUNNING main window was built without the controls overlay,
+  // i.e. in native or bare mode. Same pure observation as activeFor. The
+  // window patch only asks for bare when native is off (`!NATIVE&&BARE`
+  // short-circuits), so a null bare memo next to native=true is expected and
+  // the OR still answers right. Nothing asked yet -> false: no window exists
+  // whose layout could need fixing.
+  function withoutOverlay() {
+    return activeFor(MODES.nativeTitlebar) === true || activeFor(MODES.noWindowControls) === true;
+  }
+
   // Shared surface for window_controls_main.js (the IPC half), which must read
   // and write exactly the same keys, the same files and the same lock rule.
   // Assigned unconditionally so a rebuilt half never talks to a stale one.
@@ -210,6 +220,7 @@
     envForced: envForced,
     savedFor: savedFor,
     activeFor: activeFor,
+    withoutOverlay: withoutOverlay,
     memoized: memoized
   };
 

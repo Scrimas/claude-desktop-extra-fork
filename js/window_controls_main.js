@@ -18,9 +18,12 @@
  * Unlike the other feature toggles these CANNOT apply live: frame,
  * titleBarStyle and hasShadow are BrowserWindow constructor options on Linux
  * (setTitleBarOverlay(false) throws, there is no setFrame), so the rows' copy
- * tells the user to restart. Nothing here touches an open window, and nothing
- * here ranks the two modes against each other - that resolution belongs to
- * patches/linux/fix_native_frame.nim, which reads the two globals.
+ * tells the user to restart. Nothing here changes an open window's frame, and
+ * nothing here ranks the two modes against each other - that resolution
+ * belongs to patches/linux/fix_native_frame.nim, which reads the two globals.
+ * The one page-side job (js/window_controls_page.js, embedded below as
+ * PAGE_SRC) only fixes claude.ai's header inset for a window that was already
+ * built without the controls overlay.
  *
  * SECURITY: the caller is remote claude.ai code. Every handler validates the
  * sender's ORIGIN (not a substring test of the URL - see okSender below) and
@@ -182,6 +185,29 @@
 
   registerPair("cdb-wc:native-read", "cdb-wc:native-set", PREF.MODES.nativeTitlebar);
   registerPair("cdb-wc:pref-read", "cdb-wc:pref-set", PREF.MODES.noWindowControls);
+
+  // ---- page injection: close the window-controls gap -------------------------
+  // claude.ai reserves room for overlay window controls through
+  // env(titlebar-area-*) fallbacks; without the overlay those fallbacks leave
+  // an empty strip at the right of the header. js/window_controls_page.js
+  // rewrites them (see its header). Injected only while the RUNNING window was
+  // built without the overlay, so a toggle that still waits for a restart
+  // never changes the open window's layout.
+  var PAGE_SRC = "__CDB_WINCTL_PAGE_SRC__";
+  var pageLogged = false;
+  _electron.app.on("web-contents-created", function (_ev, wc) {
+    wc.on("dom-ready", function () {
+      try {
+        if (!PREF.withoutOverlay()) return;
+        if (!originAllowed(wc.getURL() || "")) return;
+        wc.executeJavaScript(PAGE_SRC).catch(function () {});
+        if (!pageLogged) {
+          pageLogged = true;
+          log("no controls overlay - header inset fix injected into " + wc.getURL());
+        }
+      } catch (e) {}
+    });
+  });
 
   // Our IIFE runs before __cdbDiag exists (same-anchor injections stack, and
   // console.log is discarded by the official build), so a synchronous log

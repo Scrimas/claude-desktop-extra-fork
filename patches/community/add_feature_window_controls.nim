@@ -16,7 +16,9 @@
 #      calls both when it builds the BrowserWindow options.
 #   2. js/window_controls_main.js - the four IPC handlers for the two Settings
 #      rows (cdb-wc:native-read/-set, cdb-wc:pref-read/-set), reusing (1) for
-#      every file decision.
+#      every file decision, plus the claude.ai injection of
+#      js/window_controls_page.js (embedded as a string) when the running
+#      window has no controls overlay.
 #
 # Order is load-bearing: (2) reads globalThis.__cdbWinCtlPref at evaluation
 # time and refuses to register anything if it is missing. Both are evaluated as
@@ -38,16 +40,34 @@ import std/[os, strutils, strformat]
 
 const PREF_JS = staticRead("../../js/window_controls_pref.js")
 const MAIN_JS = staticRead("../../js/window_controls_main.js")
+const PAGE_JS = staticRead("../../js/window_controls_page.js")
+
+# (2) carries js/window_controls_page.js as a JS string literal in place of
+# this placeholder; it injects that into claude.ai to close the header gap the
+# missing controls overlay leaves (see that file's header).
+const PLACEHOLDER = "\"__CDB_WINCTL_PAGE_SRC__\""
 
 # One marker per injected module, so a HALF-injected bundle (one module present,
 # the other lost to a bad edit or a partially applied patch) is a loud failure
-# instead of an [OK] backed by a false premise (AGENTS.md Rule 6).
-const MARKERS = ["__CDB_WINCTL_PREF__", "__CDB_WINCTL_MAIN__"]
-const EXPECTED_PATCHES = 2 # pref reader + IPC half
+# instead of an [OK] backed by a false premise (AGENTS.md Rule 6). The page
+# module's marker survives the string escaping, so it is counted the same way.
+const MARKERS = ["__CDB_WINCTL_PREF__", "__CDB_WINCTL_MAIN__", "__CDB_WINCTL_PAGE__"]
+const EXPECTED_PATCHES = 3 # pref reader + IPC half + embedded page source
+
+proc escapeJs(s: string): string =
+  result = s
+  result = result.replace("\\", "\\\\")
+  result = result.replace("\"", "\\\"")
+  result = result.replace("\n", "\\n")
+  result = result.replace("\r", "")
 
 proc buildInjection(): string =
+  if PLACEHOLDER notin MAIN_JS:
+    raise
+      newException(ValueError, "window_controls_main.js lost its page-src placeholder")
   # The reader MUST come first - see the order note above.
-  PREF_JS & "\n;\n" & MAIN_JS & "\n;\n"
+  PREF_JS & "\n;\n" & MAIN_JS.replace(PLACEHOLDER, "\"" & escapeJs(PAGE_JS) & "\"") &
+    "\n;\n"
 
 # Each marker must appear EXACTLY once. Counting occurrences rather than
 # testing membership catches a double injection (two copies of a module) as
@@ -66,7 +86,7 @@ proc apply*(input: string): string =
   # not merely "the pre-patch shape is gone" (AGENTS.md Rule 6).
   let present = countMarkers(result)
   if present == EXPECTED_PATCHES:
-    echo "  [OK] window controls: both modules already present (idempotent)"
+    echo "  [OK] window controls: all modules already present (idempotent)"
     return
   if present != 0:
     echo &"  [FAIL] window controls: bundle is half-patched ({present}/{EXPECTED_PATCHES} markers) - re-audit"

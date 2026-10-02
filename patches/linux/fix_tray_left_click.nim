@@ -128,7 +128,8 @@ proc apply*(input: string): string =
     ".app.on(\"browser-window-blur\",(e,w)=>{w.__cdbTrayBlurAt=Date.now()}))," & trayVar &
     ".on(\"click\",()=>{let w=" & winVar &
     ";w&&!w.isDestroyed()&&w.isVisible()&&!w.isMinimized()&&" &
-    "(w.isFocused()||Date.now()-(w.__cdbTrayBlurAt||0)<400)?w.close():" & showFn & "()})),"
+    "(w.isFocused()||Date.now()-(w.__cdbTrayBlurAt||0)<400)?w.close():" & showFn &
+    "()})),"
   result = result[0 ..< at] & inj & result[at .. ^1]
   echo &"  [OK] tray left-click -> toggle (tray {trayVar}, window {winVar}, show {showFn})"
   inc patchesApplied
