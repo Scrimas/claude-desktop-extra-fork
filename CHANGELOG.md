@@ -2,6 +2,21 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-10-02
+
+### Tray icon: left-click shows the app
+
+- New `fix_tray_left_click`: upstream builds the tray with a tooltip and a
+  context menu but never listens for `click`. On Linux the tray host
+  (StatusNotifierItem `Activate`) reports a left-click as exactly that event,
+  so it was dropped and the window was only reachable through right-click →
+  "Show App". The tray now runs the "Show App" item's own handler on
+  left-click.
+- Left-click toggles: when Claude is the focused app, it hides the window
+  into the tray (through upstream's own close-to-tray path). When the window
+  is hidden, minimized or behind another app, it is shown and focused as
+  before.
+
 ## 2026-09-28
 
 ### Upstream 2.9939.4
