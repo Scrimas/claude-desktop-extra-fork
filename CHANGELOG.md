@@ -12,6 +12,10 @@ All notable changes to the claude-desktop-extra packages will be documented in t
   so it was dropped and the window was only reachable through right-click →
   "Show App". The tray now runs the "Show App" item's own handler on
   left-click.
+- Left-click toggles: when Claude is the focused app, it hides the window
+  into the tray (through upstream's own close-to-tray path). When the window
+  is hidden, minimized or behind another app, it is shown and focused as
+  before.
 
 ## 2026-09-28
 

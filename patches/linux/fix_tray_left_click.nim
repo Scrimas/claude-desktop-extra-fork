@@ -1,7 +1,7 @@
 # @patch-target: app.asar.contents/.vite/build/index.js
 # @patch-type: nim
 #
-# Left-click on the tray icon shows the app on Linux.
+# Left-click on the tray icon toggles the app on Linux.
 #
 # Upstream (2.9939.4, tray setup in an index chunk) builds the tray with only a
 # tooltip and a context menu:
@@ -16,17 +16,34 @@
 # Tray `click` event, and with no listener the click is dropped. The only way
 # back into a hidden window is right-click -> "Show App".
 #
-# We register the "Show App" menu item's own click handler (upstream's
-# restore/focus/show routine, `UJ` in 2.9939.4) as the tray's `click` listener,
-# right after the Tray is constructed:
+# We register a `click` listener right after the Tray is constructed. It
+# toggles the main window:
 #
-#   Y9=new a.Tray(...),/*__cdb_tray_click_v1__*/process.platform==="linux"&&
-#     Y9.on("click",()=>{UJ()}),Y9.setToolTip(...)
+#   - main window visible, not minimized and focused -> `close()` it. That
+#     runs upstream's own close handler, which hides into the tray (leaving
+#     fullscreen first), exactly like the window's close button.
+#   - anything else (hidden, minimized, or behind another app) -> the "Show
+#     App" menu item's own handler (upstream's restore/focus/show routine,
+#     `UJ` in 2.9939.4).
 #
-# Both names are captured from the bundle, never hardcoded: the tray variable
-# from the constructor site, the handler from the "Show App" item (anchored on
-# its stable i18n message, not its minified name). The menu builder and the
-# tray setup live in the same chunk, so the handler is in scope.
+#   Y9=new a.Tray(...),/*__cdb_tray_click_v2__*/process.platform==="linux"&&(
+#     globalThis.__cdbTrayBlurHook||(globalThis.__cdbTrayBlurHook=1,
+#       a.app.on("browser-window-blur",(e,w)=>{w.__cdbTrayBlurAt=Date.now()})),
+#     Y9.on("click",()=>{let w=jo;w&&!w.isDestroyed()&&w.isVisible()&&
+#       !w.isMinimized()&&(w.isFocused()||Date.now()-(w.__cdbTrayBlurAt||0)<400)
+#       ?w.close():UJ()})),Y9.setToolTip(...)
+#
+# Tray hosts that take keyboard focus when clicked would blur the window just
+# before `click` arrives, so a window that lost focus less than 400 ms earlier
+# still counts as focused. The blur hook is app-wide and registered once: the
+# tray is re-created when the tray setting changes, the window may be re-created
+# too.
+#
+# Every name is captured from the bundle, never hardcoded: the Electron
+# namespace and the tray variable from the constructor site, the handler from
+# the "Show App" item (anchored on its stable i18n message, not its minified
+# name), and the main-window variable from that handler's first statement. The
+# menu builder and the tray setup live in the same chunk, so all are in scope.
 #
 # Hosts that open the menu on left-click instead of calling Activate (an item
 # with ItemIsMenu=true, which Electron does not set) are unaffected.
@@ -37,7 +54,7 @@
 import std/[os, strformat, strutils]
 import regex
 
-const MARKER = "/*__cdb_tray_click_v1__*/"
+const MARKER = "/*__cdb_tray_click_v2__*/"
 const EXPECTED_PATCHES = 1
 
 # "Show App" item of the tray context menu: `{label:X().formatMessage(
@@ -46,13 +63,19 @@ let showAppRe = re2(
   """\{label:[\w$]+\(\)\.formatMessage\(\{defaultMessage:["`]Show App["`],id:["`][^"`]+["`]\}\),click:([\w$]+)\}"""
 )
 # Tray construction inside the comma expression of the tray-update function:
-# `Y9=new a.Tray(a.nativeImage.createFromPath(r)),`. Group 0 = tray variable.
+# `Y9=new a.Tray(a.nativeImage.createFromPath(r)),`. Group 0 = tray variable,
+# group 1 = Electron namespace.
 let trayRe = re2(
-  """([\w$]+)=new [\w$]+\.Tray\([\w$]+\.nativeImage\.createFromPath\([\w$]+\)\),"""
+  """([\w$]+)=new ([\w$]+)\.Tray\([\w$]+\.nativeImage\.createFromPath\([\w$]+\)\),"""
 )
 let doneRe = re2(
-  """([\w$]+)=new [\w$]+\.Tray\([\w$]+\.nativeImage\.createFromPath\([\w$]+\)\),/\*__cdb_tray_click_v1__\*/process\.platform==="linux"&&([\w$]+)\.on\("click",\(\)=>\{[\w$]+\(\)\}\),"""
+  """([\w$]+)=new [\w$]+\.Tray\([\w$]+\.nativeImage\.createFromPath\([\w$]+\)\),/\*__cdb_tray_click_v2__\*/process\.platform==="linux"&&\(globalThis\.__cdbTrayBlurHook\|\|\(globalThis\.__cdbTrayBlurHook=1,[\w$]+\.app\.on\("browser-window-blur",\(e,w\)=>\{w\.__cdbTrayBlurAt=Date\.now\(\)\}\)\),([\w$]+)\.on\("click",\(\)=>\{let w=[\w$]+;[^}]*\?w\.close\(\):[\w$]+\(\)\}\)\),"""
 )
+
+# The "Show App" handler's first statement reads the main window:
+# `function UJ(){let e=jo;`. Group 0 = main-window variable.
+proc showFnRe(showFn: string): Regex2 =
+  re2("function " & escapeRe(showFn) & """\(\)\{let [\w$]+=([\w$]+);""")
 
 proc allMatches(s: string, r: Regex2): seq[RegexMatch2] =
   for m in findAll(s, r):
@@ -91,12 +114,23 @@ proc apply*(input: string): string =
 
   let showFn = input[showMs[0].group(0)]
   let trayVar = input[trayMs[0].group(0)]
+  let ns = input[trayMs[0].group(1)]
+  let winMs = allMatches(input, showFnRe(showFn))
+  if winMs.len != 1:
+    echo &"  [FAIL] `function {showFn}(){{let <e>=<win>;`: {winMs.len} matches (want 1)"
+    raise newException(ValueError, "fix_tray_left_click: Show App handler shape moved")
+  let winVar = input[winMs[0].group(0)]
+
   let at = trayMs[0].boundaries.b + 1
   let inj =
-    MARKER & "process.platform===\"linux\"&&" & trayVar & ".on(\"click\",()=>{" & showFn &
-    "()}),"
+    MARKER & "process.platform===\"linux\"&&(globalThis.__cdbTrayBlurHook||" &
+    "(globalThis.__cdbTrayBlurHook=1," & ns &
+    ".app.on(\"browser-window-blur\",(e,w)=>{w.__cdbTrayBlurAt=Date.now()}))," & trayVar &
+    ".on(\"click\",()=>{let w=" & winVar &
+    ";w&&!w.isDestroyed()&&w.isVisible()&&!w.isMinimized()&&" &
+    "(w.isFocused()||Date.now()-(w.__cdbTrayBlurAt||0)<400)?w.close():" & showFn & "()})),"
   result = result[0 ..< at] & inj & result[at .. ^1]
-  echo &"  [OK] tray left-click -> Show App handler (tray {trayVar}, handler {showFn})"
+  echo &"  [OK] tray left-click -> toggle (tray {trayVar}, window {winVar}, show {showFn})"
   inc patchesApplied
 
   # Positive end-state: the injected listener is present exactly once.

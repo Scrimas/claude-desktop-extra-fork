@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Tray icon: left-click shows the app on Linux.
+// Tray icon: left-click toggles the app on Linux.
 //
 // WHY THIS EXISTS
 // ---------------
@@ -9,8 +9,9 @@
 // no listener the click is dropped and the window is only reachable through
 // right-click -> "Show App".
 //
-// patches/linux/fix_tray_left_click.nim registers the "Show App" item's own
-// handler as the tray's `click` listener. This harness runs the compiled patch
+// patches/linux/fix_tray_left_click.nim registers a `click` listener that
+// closes (hides into the tray) a focused main window and otherwise runs the
+// "Show App" item's own handler. This harness runs the compiled patch
 // on the upstream shapes (copied from the 2.9939.4 bundle), then drives the
 // patched tray setup with a mock Electron and fires `click`.
 //
@@ -76,6 +77,7 @@ function runPatch(file) {
 function boot(src, platform, win) {
   const ev = [];
   const handlers = {};
+  const appHandlers = {};
   class Tray {
     constructor() { this.menu = null; }
     on(n, f) { (handlers[n] ||= []).push(f); return this; }
@@ -87,22 +89,31 @@ function boot(src, platform, win) {
   const w = {
     visible: win.visible,
     minimized: win.minimized,
+    focused: !!win.focused,
     isDestroyed: () => false,
     isMinimized: () => w.minimized,
     isVisible: () => w.visible,
+    isFocused: () => w.focused,
     restore: () => { w.minimized = false; ev.push("restore"); },
-    focus: () => ev.push("focus"),
+    focus: () => { w.focused = true; ev.push("focus"); },
     show: () => { w.visible = true; ev.push("show"); },
+    // Upstream's close handler hides into the tray.
+    close: () => { w.visible = false; w.focused = false; ev.push("close"); },
+  };
+  const app = {
+    getName: () => "Claude",
+    on(n, f) { (appHandlers[n] ||= []).push(f); return app; },
+    emit(n, ...args) { for (const f of appHandlers[n] || []) f(...args); },
   };
   const sandbox = {
     __ev: ev,
     process: { platform },
-    a: { Tray, nativeImage: { createFromPath: (p) => p }, app: { getName: () => "Claude" } },
+    a: { Tray, nativeImage: { createFromPath: (p) => p }, app },
   };
   // The fixture is strict, so every global it assigns must already exist.
   Object.assign(sandbox, { __w: w, __tray: null });
   vm.runInNewContext(src + "\n;jo=__w;I7i();__tray=Y9;", vm.createContext(sandbox));
-  return { tray: sandbox.__tray, ev, w };
+  return { tray: sandbox.__tray, ev, w, app, appHandlers };
 }
 
 const scratch = mkdtempSync(join(tmpdir(), "cdb-tray-click-"));
@@ -124,7 +135,7 @@ try {
   const r1 = runPatch(file);
   check("first run exits 0", r1.status, 0);
   check("no [FAIL] line", /\[FAIL\]/.test(r1.out), false);
-  check("captured names reported", /tray Y9, handler UJ/.test(r1.out), true);
+  check("captured names reported", /tray Y9, window jo, show UJ/.test(r1.out), true);
   const patched = readFileSync(file, "utf8");
   check("patched output changed", patched !== FIXTURE, true);
   execFileSync("node", ["--check", file]);
@@ -145,7 +156,7 @@ try {
   }
   {
     const half = join(scratch, "half.js");
-    writeFileSync(half, FIXTURE + "/*__cdb_tray_click_v1__*/");
+    writeFileSync(half, FIXTURE + "/*__cdb_tray_click_v2__*/");
     const r = runPatch(half);
     check("stray marker without listener exits non-zero", r.status !== 0, true);
   }
@@ -158,7 +169,7 @@ try {
     check("hidden window stays hidden", ev.join(","), "");
   }
 
-  section("[B1] patched, Linux: left-click runs the Show App handler");
+  section("[B1] patched, Linux: left-click on a hidden or unfocused window shows it");
   {
     const { tray, ev, w } = boot(patched, "linux", { visible: false, minimized: false });
     check("one click listener", tray.listenerCount("click"), 1);
@@ -174,17 +185,54 @@ try {
   {
     const { tray, ev } = boot(patched, "linux", { visible: true, minimized: false });
     tray.emit("click");
-    check("visible window is focused", ev.join(","), "focus");
+    check("visible but unfocused window is focused", ev.join(","), "focus");
   }
   {
     const { tray } = boot(patched, "linux", { visible: false, minimized: false });
     check("context menu still set", Array.isArray(tray.menu) && tray.menu[0].label, "Show App");
   }
 
-  section("[B2] patched, other platforms: no listener");
+  section("[B2] patched, Linux: left-click on the focused window hides it into the tray");
   {
-    const { tray } = boot(patched, "darwin", { visible: false, minimized: false });
+    const { tray, ev, w } = boot(patched, "linux", { visible: true, minimized: false, focused: true });
+    tray.emit("click");
+    check("focused window is closed (upstream hides to tray)", ev.join(","), "close");
+    check("window hidden", w.visible, false);
+    tray.emit("click");
+    check("second click shows it again", ev.join(","), "close,zo,show");
+  }
+  {
+    const { tray, ev, w, app } = boot(patched, "linux", { visible: true, minimized: false, focused: true });
+    // A tray host that takes focus on click blurs the window just before `click`.
+    w.focused = false;
+    app.emit("browser-window-blur", {}, w);
+    tray.emit("click");
+    check("window blurred by the click itself still counts as focused", ev.join(","), "close");
+  }
+  {
+    const { tray, ev, w, app } = boot(patched, "linux", { visible: true, minimized: false, focused: true });
+    w.focused = false;
+    app.emit("browser-window-blur", {}, w);
+    w.__cdbTrayBlurAt -= 5000;
+    tray.emit("click");
+    check("window blurred long ago is focused, not hidden", ev.join(","), "focus");
+  }
+  {
+    const { tray, ev } = boot(patched, "linux", { visible: true, minimized: true, focused: true });
+    tray.emit("click");
+    check("minimized window is restored, not hidden", ev.join(","), "restore,focus");
+  }
+  {
+    const src = patched + "\n;I7i();I7i();";
+    const { appHandlers } = boot(src, "linux", { visible: false, minimized: false });
+    check("re-created tray registers the blur hook once", (appHandlers["browser-window-blur"] || []).length, 1);
+  }
+
+  section("[B3] patched, other platforms: no listener");
+  {
+    const { tray, appHandlers } = boot(patched, "darwin", { visible: false, minimized: false });
     check("darwin: no click listener", tray.listenerCount("click"), 0);
+    check("darwin: no blur hook", (appHandlers["browser-window-blur"] || []).length, 0);
   }
 } finally {
   rmSync(scratch, { recursive: true, force: true });
