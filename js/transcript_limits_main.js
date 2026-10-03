@@ -124,15 +124,18 @@
     var jsonc = readFileJson(pathFor(JSONC_NAME));
     var json = readFileJson(pathFor(JSON_NAME));
     var en = pick(jsonc, json, PREF_KEY, isBool);
-    // Same as coworkGlowOpacity: a value that is not a number falls back to the
-    // default, a number is clamped into range. Nothing here warns - the effective
-    // numbers are what the row and the startup log show.
+    // Same as coworkGlowOpacity (patches/community/add_feature_cowork_glow.nim):
+    // a number, or a string parseFloat can read (a quoted "512" is an easy slip in
+    // hand-edited JSON), is clamped into range; anything else falls back to the
+    // default. Nothing here warns - the effective numbers are what the row and the
+    // startup log show.
     function mib(key, dflt) {
       var hit = pick(jsonc, json, key, isSet);
       if (!hit) return dflt;
       var v = hit.value;
-      if (typeof v !== "number" || !isFinite(v)) return dflt;
-      return Math.round(Math.min(MAX_MIB, Math.max(MIN_MIB, v)));
+      var n = typeof v === "number" ? v : parseFloat(v);
+      if (!isFinite(n)) return dflt;
+      return Math.round(Math.min(MAX_MIB, Math.max(MIN_MIB, n)));
     }
     return {
       enabled: en ? en.value : PREF_DEFAULT,

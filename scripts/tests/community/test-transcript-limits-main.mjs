@@ -162,7 +162,14 @@ for (const [label, val, want] of [["below the minimum", 7, 8], ["above the maxim
   ok(m.logs.every((l) => !/WARN/.test(l)), "...without a warning (" + label + ")");
   rmSync(dir, { recursive: true, force: true });
 }
-for (const [label, val] of [["a string", "300"], ["null", null], ["an object", {}], ["a boolean", true]]) {
+// A quoted number is accepted, as coworkGlowOpacity accepts "0.5": an easy slip in hand-edited JSON.
+for (const [label, val, want] of [["a quoted number", "100", 100], ["a quoted number above the range", "5000", 4096], ["a quoted number below the range", "2", 8]]) {
+  const dir = profile({ [J]: { transcriptLimits: true, transcriptLimitsMainMiB: val } });
+  const L = load(dir).g.__cdbTranscriptLimits();
+  ok(L.mainBytes === want * MIB, label + " is read like coworkGlowOpacity reads one (" + JSON.stringify(val) + " -> " + want + " MiB)");
+  rmSync(dir, { recursive: true, force: true });
+}
+for (const [label, val] of [["text", "lots"], ["an empty string", ""], ["null", null], ["an object", {}], ["an array", []], ["a boolean", true]]) {
   const dir = profile({ [J]: { transcriptLimits: true, transcriptLimitsMainMiB: val } });
   const L = load(dir).g.__cdbTranscriptLimits();
   ok(L.mainBytes === 256 * MIB, "a value that is not a number (" + label + ") falls back to the default");

@@ -29,9 +29,11 @@ All notable changes to the claude-desktop-extra packages will be documented in t
   one hook covers the loader and the "too large" notice check, with no
   rewriting of Anthropic's numbers. The heavy-work utility process, which bundles
   its own copy, gets the same numbers through an env var. Anchors are config
-  property names (`onTranscriptTruncatedChanged:`, `mainBytes:`), which survive
-  minification; the limits object matched in upstream 1.37937.3, 1.52386.6,
-  2.2553.1 and 2.9939.4 with different variable names in each.
+  property names, which survive minification. The constructor anchor
+  (`onTranscriptTruncatedChanged:`, 2 sites, and the manager reading
+  `loadLimits`) and the worker's limits object (`mainBytes:`) were checked in
+  upstream 1.52386.6, 2.2553.1 and 2.9939.4, the limits object also in 1.37937.3,
+  with different variable names in each.
 
 ### Transparent window (thanks @mike-899, #262)
 
