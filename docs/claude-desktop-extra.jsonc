@@ -52,8 +52,8 @@
   // screenshots. The app only loads the last 50 MiB of a session's transcript, plus
   // one shared 32 MiB for all of its subagents' transcripts, and hides the rest behind
   // "This session is too large to load in full" (the start of the conversation, or
-  // some subagent activity). A screenshot returned inline is ~1 MB of base64 and the
-  // transcript stores each tool result twice, so a few dozen add up fast. true loads
+  // some subagent activity). A screenshot returned inline is ~0.4 MB of base64 (stored
+  // twice in the main transcript), so 60-80 of them reach a limit. true loads
   // up to 256 MiB of the conversation and 192 MiB of subagent activity instead, at the
   // cost of memory and time when you open a huge session; omit it for Anthropic's own
   // limits. Needs a restart. Settings -> Extra -> Community Features has a switch for

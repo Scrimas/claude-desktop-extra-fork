@@ -5,8 +5,9 @@
  * the last 50 MiB of a session's transcript, plus ONE shared 32 MiB for all of the
  * session's subagent transcripts, and hides the rest behind "This session is too
  * large to load in full". Sessions with many inline browser screenshots reach that
- * within hours: a screenshot is ~1 MB of base64 and the transcript stores each
- * tool result twice.
+ * within hours: a screenshot is ~0.4 MB of base64 (tools scale it to ~2000 px wide),
+ * and the main transcript stores each tool result twice (message.content and
+ * toolUseResult), subagent transcripts once, so 60-80 of them reach a limit.
  *
  * That class already takes an optional `loadLimits` option which nothing in the
  * app ever sets. This module is what sets it - and ONLY when the user has opted

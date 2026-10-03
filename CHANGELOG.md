@@ -14,9 +14,11 @@ All notable changes to the claude-desktop-extra packages will be documented in t
   in full." (the start of the conversation, including your own first prompt) or
   "Some agent activity isn't shown. ..." (the subagents' step-by-step work). Long
   sessions with many inline browser screenshots reach that within hours: a
-  screenshot is about 1 MB of base64 and the transcript stores each tool result
-  twice. With the switch on, the limits are 256 MiB and 192 MiB; with it off,
-  nothing changes and every limit stays exactly as Anthropic ships it.
+  screenshot is typically 0.4 MB of base64 (the tool scales it to about 2000 px
+  wide), the main transcript stores each tool result twice and subagent
+  transcripts once, so roughly 60 to 80 screenshots reach a limit. With the
+  switch on, the limits are 256 MiB and 192 MiB; with it off, nothing changes
+  and every limit stays exactly as Anthropic ships it.
 - Numbers are optional config keys, like `coworkGlowOpacity`:
   `transcriptLimitsMainMiB` and `transcriptLimitsSubagentMiB` (clamped to 8..4096
   like `coworkGlowOpacity` is clamped to 0..1, so a machine with little RAM can go

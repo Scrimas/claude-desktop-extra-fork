@@ -9,8 +9,8 @@
 # transcripts, and hides the rest behind "Earlier messages aren't shown. This
 # session is too large to load in full." / "Some agent activity isn't shown.
 # ...". Sessions with many inline browser screenshots reach that within hours
-# (a screenshot is ~1 MB of base64, and the transcript stores each tool result
-# twice).
+# (a screenshot is ~0.4 MB of base64; the main transcript stores each tool result
+# twice, subagent transcripts once, so 60-80 of them reach a limit).
 #
 # The class already takes an optional `loadLimits` config object, merged over its
 # own defaults (`this.limits={...defaults,...loadLimits}`) and also read by
