@@ -17,11 +17,11 @@
  *      titlebar). On the window we just built (caught by browser-window-created)
  *      the first becomes a no-op and the second has its colour forced to
  *      transparent, so a theme flip cannot bring the solid background back.
- *   3. A stylesheet is inserted into the window's own shell page and into
- *      claude.ai that clears the page background and gives the visible surfaces
- *      (sidebar, bg-surface-N) an alpha of windowOpacity. Blur behind the
- *      window is the COMPOSITOR's job (Hyprland decoration:blur, KWin "Blur"
- *      effect, ...) - the app only has to stop being opaque.
+ *   3. A stylesheet is inserted into the window's own shell page and into its
+ *      claude.ai view that clears the page background and gives the visible
+ *      surfaces (sidebar, bg-surface-N) an alpha of windowOpacity. Blur behind
+ *      the window is the COMPOSITOR's job (Hyprland decoration:blur, KWin
+ *      "Blur" effect, ...) - the app only has to stop being opaque.
  *
  * Transparency needs a frameless window, so it is skipped (and logged) when the
  * native titlebar is in use (frame:true). Why the patch is a spread in the options
@@ -124,6 +124,7 @@
 
   // Spread into the MAIN window's options literal, after upstream's own keys.
   var pendingMain = false;
+  var mainWin = null;
   globalThis.__cdbWinTransExtra = function () {
     try {
       if (active !== null) return active ? { transparent: true, backgroundColor: "#00000000" } : {};
@@ -150,6 +151,7 @@
     try {
       if (!pendingMain) return;
       pendingMain = false;
+      mainWin = win;
       win.setBackgroundColor = function () {};
       // patches/linux/fix_window_bounds.nim "jiggles" the window on
       // ready-to-show: setSize(w+1,h+1), then 50 ms later setSize(w,h) with the
@@ -245,13 +247,41 @@
     return /^file:\/\/.*\/renderer\/main_window\//.test(String(rawUrl));
   }
 
+  // Only the main window is see-through. Pop-outs, the Code and Design windows,
+  // artifact pop-ups and the 3P config window load claude.ai in BrowserWindows
+  // of their own with an opaque background, so a claude.ai webContents that
+  // another live window provably owns - as its own webContents or as a view in
+  // its contentView tree - is left alone. Unclaimed (not attached yet, or the
+  // main window's own view), no main window to tell apart, or any error: the
+  // CSS goes in as before, so the main window never loses it here.
+  function viewHolds(view, wc) {
+    if (!view) return false;
+    if (view.webContents === wc) return true;
+    var kids = view.children || [];
+    for (var i = 0; i < kids.length; i++) if (viewHolds(kids[i], wc)) return true;
+    return false;
+  }
+  function otherWindowOwns(wc) {
+    try {
+      if (!mainWin || mainWin.isDestroyed()) return false;
+      var wins = _electron.BrowserWindow.getAllWindows();
+      for (var i = 0; i < wins.length; i++) {
+        var w = wins[i];
+        if (!w || w === mainWin || w.isDestroyed()) continue;
+        if (w.webContents === wc || viewHolds(w.contentView, wc)) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   _electron.app.on("web-contents-created", function (_ev, wc) {
     wc.on("dom-ready", function () {
       try {
         if (active !== true) return;
         var url = wc.getURL() || "";
-        if (originAllowed(url)) wc.insertCSS(buildCss(alpha())).catch(function () {});
-        else if (isShell(url)) wc.insertCSS(SHELL_CSS).catch(function () {});
+        if (originAllowed(url)) {
+          if (!otherWindowOwns(wc)) wc.insertCSS(buildCss(alpha())).catch(function () {});
+        } else if (isShell(url)) wc.insertCSS(SHELL_CSS).catch(function () {});
       } catch (e) {}
     });
   });
@@ -310,7 +340,8 @@
       opacity: alpha(),
       lockedByJsonc: disk.source === "jsonc-locked",
       source: disk.source,
-      envForced: env !== null
+      envForced: env !== null,
+      nativeTitlebar: nativeTitlebar()
     };
   });
   ipc.handle("cdb-wt:pref-set", function (ev, enabled) {

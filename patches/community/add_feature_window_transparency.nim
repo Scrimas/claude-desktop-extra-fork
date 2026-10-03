@@ -24,8 +24,10 @@
 # RESTART. It requires a frameless window and is skipped when the native
 # titlebar is on.
 #
-# Break risk: LOW - anchored on the stable MAIN_WINDOW webContents tag, no
-# minified names hardcoded.
+# Break risk: LOW for A (stable "use strict"; head anchor). B anchors on the key
+# order `backgroundColor:<fn>(),opacity:<v>,icon:` in the main window's options
+# literal - the same backgroundColor/opacity pair fix_native_frame anchors on -
+# with every identifier a wildcard; a reorder fails loud (match count != 1).
 
 import std/[os, strformat, strutils]
 import regex

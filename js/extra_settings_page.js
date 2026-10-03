@@ -1340,8 +1340,11 @@
       note: "Makes the main window see-through so the desktop - and any blur your compositor " +
         "(Hyprland, KWin, ...) applies behind it - shows through the sidebar and the chat area. " +
         "How see-through is the \"windowOpacity\" key in claude-desktop-extra.jsonc (0.1 to 1, " +
-        "default 0.8). Needs the integrated titlebar: it does nothing while the native titlebar is " +
-        "on. Takes effect after a restart - transparency is fixed when the window is created.",
+        "default 0.8). A transparent window has no minimize/maximize/close buttons and no shadow: " +
+        "close and maximize through your window manager (Alt+F4 and friends) and resize by dragging " +
+        "the outermost few pixels of the window. On X11 a compositor must be running, or the window " +
+        "turns black. Needs the integrated titlebar: it does nothing while the native titlebar is " +
+        "on. Takes effect after a restart.",
       ariaLabel: "make the main window transparent",
       read: "windowTransparencyRead",
       write: "windowTransparencySet",
@@ -1351,6 +1354,9 @@
         if (res && res.envForced === true) {
           return "decided for this run by CLAUDE_WINDOW_TRANSPARENCY - saved: " + (on ? "on" : "off");
         }
+        // The native titlebar won when this window was built, so `active` is
+        // false and a restart alone would not apply it.
+        if (on && res && res.nativeTitlebar === true) return "on - inactive while the native titlebar is on";
         var pct = res && typeof res.opacity === "number" ? Math.round(res.opacity * 100) + "% opacity" : "";
         var line = on ? "on" + (pct ? " - " + pct : "") : "off - opaque window";
         if (res && typeof res.active === "boolean" && res.active !== on) line += " (restart to apply)";
