@@ -87,6 +87,8 @@ community/add_feature_window_controls: \
   ../js/window_controls_pref.js \
   ../js/window_controls_main.js
 
+community/add_feature_window_transparency: ../js/window_transparency.js
+
 # Files quick open: the worker patch embeds the multi-piece search helper; the
 # main patch embeds the main-process module AND the page script; the bridge
 # patch embeds the preload snippet.

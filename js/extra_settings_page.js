@@ -1329,6 +1329,43 @@
     });
   }
 
+  // The main window's see-through mode. Constructor-only (transparent cannot be
+  // flipped on a built window), so like the two Window rows above it says
+  // "restart" in its note and toast; the opacity itself is the windowOpacity key
+  // in claude-desktop-extra.jsonc, and blur is the compositor's job.
+  function renderWindowTransparencyRow(panel) {
+    return renderToggleRow(panel, {
+      section: "Window",
+      title: "Transparent window",
+      note: "Makes the main window see-through so the desktop - and any blur your compositor " +
+        "(Hyprland, KWin, ...) applies behind it - shows through the sidebar and the chat area. " +
+        "How see-through is the \"windowOpacity\" key in claude-desktop-extra.jsonc (0.1 to 1, " +
+        "default 0.8). Needs the integrated titlebar: it does nothing while the native titlebar is " +
+        "on. Takes effect after a restart - transparency is fixed when the window is created.",
+      ariaLabel: "make the main window transparent",
+      read: "windowTransparencyRead",
+      write: "windowTransparencySet",
+      lockFile: "claude-desktop-extra.jsonc",
+      isOn: function (res) { return res.enabled === true; },
+      describe: function (on, res) {
+        if (res && res.envForced === true) {
+          return "decided for this run by CLAUDE_WINDOW_TRANSPARENCY - saved: " + (on ? "on" : "off");
+        }
+        var pct = res && typeof res.opacity === "number" ? Math.round(res.opacity * 100) + "% opacity" : "";
+        var line = on ? "on" + (pct ? " - " + pct : "") : "off - opaque window";
+        if (res && typeof res.active === "boolean" && res.active !== on) line += " (restart to apply)";
+        return line;
+      },
+      writeArg: function (next) { return next; },
+      toast: function (next) {
+        return next
+          ? "Transparent window on - restart Claude Desktop to apply it"
+          : "Transparent window off - restart Claude Desktop to get the opaque window back";
+      },
+      errorPrefix: "Could not change the transparent window: "
+    });
+  }
+
   // The mode that hands the whole titlebar back to the window manager. It wins
   // over the row above, which is why its own describe() says nothing about what
   // happens when it is off - that is the other row's line to write.
@@ -1891,6 +1928,7 @@
     renderFilesQuickOpenRow,
     renderWindowControlsRow,
     renderNativeTitlebarRow,
+    renderWindowTransparencyRow,
     renderGlowRow,
     renderThemePickerRow
   ];
