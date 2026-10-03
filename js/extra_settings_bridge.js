@@ -145,6 +145,15 @@
       return ipcRenderer.invoke("cdb-wc:native-set", enabled === true);
     },
 
+    // Transparent main window - owned by patches/community/add_feature_window_transparency.nim.
+    // Constructor-only like the window modes above, so a flip reaches the next start.
+    windowTransparencyRead: function () {
+      return ipcRenderer.invoke("cdb-wt:pref-read");
+    },
+    windowTransparencySet: function (enabled) {
+      return ipcRenderer.invoke("cdb-wt:pref-set", enabled === true);
+    },
+
     // Deployment mode (1P / 3P) and the third-party configuration the app boots
     // from. deployMode() takes only "1p"/"3p"; deploySet() only keys the main
     // side finds in its own catalog, and stored secrets never come back through

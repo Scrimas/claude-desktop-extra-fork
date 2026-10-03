@@ -4,6 +4,14 @@ All notable changes to the claude-desktop-extra packages will be documented in t
 
 ## 2026-10-02
 
+### Transparent window (new community feature)
+
+- New `add_feature_window_transparency`: Settings -> Extra -> Community
+  Features -> **Transparent window** (or `"windowTransparency": true`) opens the
+  main window see-through; `"windowOpacity"` (0.1-1, default 0.8) sets how much
+  of the sidebar and chat surfaces stays opaque. Blur behind the window is the
+  compositor's job. Applies on the next start and needs the integrated titlebar.
+
 ### Tray left-click and titlebar gap fix (thanks @Scrimas, #260 #261)
 
 - New `fix_tray_left_click`: left-clicking the tray icon now shows the app.
