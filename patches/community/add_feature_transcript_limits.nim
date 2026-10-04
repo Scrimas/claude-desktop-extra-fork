@@ -22,6 +22,10 @@
 # number literals: one semantic change, no tracking of upstream's values.
 #
 #   A. inject js/transcript_limits_main.js (pref, derivation, IPC, worker env)
+#   B. precondition (asserted, not applied): the generic worker host forks with
+#      main's live env - see below
+#   P. precondition (asserted, not applied): upstream still READS `loadLimits` -
+#      see below
 #   C. `new <Manager>({onTranscriptTruncatedChanged:` ->
 #      `new <Manager>({loadLimits:globalThis.__cdbTranscriptLimits?.(),onTranscriptTruncatedChanged:`
 #      at BOTH construction sites (the session manager, and the sidebar's
@@ -40,8 +44,21 @@
 # pass-through is ever missing, e.g. if that patch is dropped. The pinned shape is
 #   utilityProcess.fork(r,[],{serviceName:t,stdio:"pipe",env:Object.assign({},process.env)})
 #
-# Break risk: LOW. A has a stable head-of-bundle anchor; the precondition pins the
-# fork site's end state (exactly one); C anchors on a config
+# PRECONDITION, not a sub-patch: upstream still CONSUMES the option. C's end
+# state only proves that WE pass `loadLimits:`. If upstream renamed the option,
+# both constructor anchors would still match, C would print [OK], and the
+# manager would silently ignore the value. So its two reads are pinned, each to
+# exactly one site (2.9939.4 shapes, in an index.chunk-*):
+#   this.inProcess=new _e(e.loadLimits)   the in-process reader: the limits are
+#                                         merged over the defaults ({...ae,...e})
+#   let c=this.config.loadLimits          predictTranscriptTruncation's read
+# Neither regex can match our own injection: C writes `loadLimits:globalThis...`
+# and js/transcript_limits_main.js must never spell either shape (not even in a
+# comment - it is injected verbatim), so an idempotent second run still counts 1.
+#
+# Break risk: LOW. A has a stable head-of-bundle anchor; the preconditions pin the
+# fork site's end state and upstream's two `loadLimits` reads (exactly one each);
+# C anchors on a config
 # PROPERTY name (`onTranscriptTruncatedChanged:`), which survives minification
 # where identifiers do not. C is pinned to exactly two sites: a third (or a
 # renamed option) fails the build rather than silently skipping a manager.
@@ -52,13 +69,17 @@ import regex
 const MAIN_JS = staticRead("../../js/transcript_limits_main.js")
 const MARKER = "__CDB_TRANSCRIPT_LIMITS__"
 const EXPECTED_PATCHES = 2
-  # A: main-process half, C: loadLimits hook (B is a precondition)
+  # A: main-process half, C: loadLimits hook (B and P are preconditions)
 const CTOR_SITES = 2
 
 # The precondition's end state (written by add_feature_files_quick_open.nim
 # sub-patch B). Quote-agnostic: the style flips between minifier releases.
 let forkEndStateRe =
   re2"""stdio:["`]pipe["`],env:Object\.assign\(\{\},process\.env\)\}"""
+
+# Precondition P: upstream's two reads of the option (see the header).
+let limitsCtorReadRe = re2"""new [\w$.]+\([\w$]+\.loadLimits\)"""
+let limitsConfigReadRe = re2"""this\.config\.loadLimits\b"""
 
 # Sub-patch C. Group 0 = `new <id>.<id>({`.
 let ctorRe = re2"""(new [\w$.]+\(\{)onTranscriptTruncatedChanged:"""
@@ -70,6 +91,9 @@ proc forkEndStateCount(s: string): int =
 
 proc ctorEndStateCount(s: string): int =
   s.findAll(ctorEndRe).len
+
+proc limitsReadCounts(s: string): (int, int) =
+  (s.findAll(limitsCtorReadRe).len, s.findAll(limitsConfigReadRe).len)
 
 proc apply*(input: string): string =
   result = input
@@ -103,6 +127,17 @@ proc apply*(input: string): string =
       "it CDB_TRANSCRIPT_LIMITS never reaches the heavy-work worker; re-audit"
     quit(1)
   echo "  [OK] transcript limits: worker host forks with main's env (precondition met)"
+
+  # --- precondition P: upstream still reads the loadLimits option ---------------
+  # Without it C would "succeed" into an option nothing reads (see the header).
+  let (ctorReads, configReads) = limitsReadCounts(result)
+  if ctorReads != 1 or configReads != 1:
+    echo "  [FAIL] transcript limits: expected upstream to read loadLimits at exactly 1 " &
+      "`new <Reader>(<cfg>.loadLimits)` and 1 `this.config.loadLimits`, found " &
+      $ctorReads & " and " & $configReads & " - the option was renamed or its reads " &
+      "moved, so passing it would change nothing; re-audit before re-fitting C"
+    quit(1)
+  echo "  [OK] transcript limits: upstream reads loadLimits (precondition met)"
 
   # --- C: hand the limits to both manager constructors --------------------------------
   let ctorDone = ctorEndStateCount(result)
@@ -153,7 +188,7 @@ when isMainModule:
     echo "  [PASS] transcript limits applied"
   else:
     if MARKER notin output or forkEndStateCount(output) != 1 or
-        ctorEndStateCount(output) != CTOR_SITES:
+        limitsReadCounts(output) != (1, 1) or ctorEndStateCount(output) != CTOR_SITES:
       echo "  [FAIL] No changes made and the end-state is absent"
       quit(1)
     echo "  [OK] Already applied (no changes needed)"

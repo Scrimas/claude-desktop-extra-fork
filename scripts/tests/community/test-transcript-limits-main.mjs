@@ -23,17 +23,27 @@ const ok = (c, n) => { if (c) { pass++; console.log("  ok   " + n); }
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
 // profileDir: a string for a real profile dir; platform: "linux" unless testing
-// the gate; env: the process.env the module sees (and mutates).
-function load(profileDir, { platform = "linux", env = {}, diag = true } = {}) {
+// the gate; env: the process.env the module sees (and mutates); heap: the V8
+// heap_size_limit (bytes) require("v8") reports - pinned to 8 GiB by default so
+// no assertion depends on the RAM of the machine running the test - or "throw"
+// for a getHeapStatistics() that throws, "missing" for a result without the key.
+const GIB = 1024 * MIB;
+function load(profileDir, { platform = "linux", env = {}, diag = true, heap = 8 * GIB } = {}) {
   const handlers = {};
   const logs = [];
   const electron = {
     app: { getPath: () => profileDir, on: () => {} },
     ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; } }
   };
+  const v8 = {
+    getHeapStatistics: () => {
+      if (heap === "throw") throw new Error("no heap statistics");
+      return heap === "missing" ? {} : { heap_size_limit: heap };
+    }
+  };
   const src = readFileSync(join(ROOT, "js/transcript_limits_main.js"), "utf8");
   const sandbox = {
-    require: (m) => (m === "electron" ? electron : Module.createRequire(import.meta.url)(m)),
+    require: (m) => (m === "electron" ? electron : m === "v8" ? v8 : Module.createRequire(import.meta.url)(m)),
     process: { platform, env }, console, globalThis: {}, setTimeout
   };
   if (diag) sandbox.__cdbDiag = (m) => logs.push(m);
@@ -140,9 +150,9 @@ const snap = (o) => JSON.stringify(o);
   rmSync(dir, { recursive: true, force: true });
 }
 {
-  const dir = profile({ [J]: { transcriptLimits: true, transcriptLimitsMainMiB: 8, transcriptLimitsSubagentMiB: 4096 } });
+  const dir = profile({ [J]: { transcriptLimits: true, transcriptLimitsMainMiB: 8, transcriptLimitsSubagentMiB: 1024 } });
   const L = load(dir).g.__cdbTranscriptLimits();
-  ok(L.mainBytes === 8 * MIB && L.subagentBytes === 4096 * MIB, "the range endpoints (8 and 4096 MiB) are accepted");
+  ok(L.mainBytes === 8 * MIB && L.subagentBytes === 1024 * MIB, "the range endpoints (8 and 1024 MiB) are accepted");
   rmSync(dir, { recursive: true, force: true });
 }
 {
@@ -153,7 +163,7 @@ const snap = (o) => JSON.stringify(o);
 // Same as coworkGlowOpacity: a number outside the range is CLAMPED into it, a value that
 // is not a number falls back to the default, and nothing is warned about - the numbers in
 // effect (shown in the row and the startup log) are the feedback.
-for (const [label, val, want] of [["below the minimum", 7, 8], ["above the maximum", 5000, 4096], ["negative", -5, 8]]) {
+for (const [label, val, want] of [["below the minimum", 7, 8], ["above the maximum", 5000, 1024], ["the old 4096 maximum", 4096, 1024], ["negative", -5, 8]]) {
   const dir = profile({ [J]: { transcriptLimits: true, transcriptLimitsMainMiB: val } });
   const m = load(dir);
   const L = m.g.__cdbTranscriptLimits();
@@ -163,7 +173,7 @@ for (const [label, val, want] of [["below the minimum", 7, 8], ["above the maxim
   rmSync(dir, { recursive: true, force: true });
 }
 // A quoted number is accepted, as coworkGlowOpacity accepts "0.5": an easy slip in hand-edited JSON.
-for (const [label, val, want] of [["a quoted number", "100", 100], ["a quoted number above the range", "5000", 4096], ["a quoted number below the range", "2", 8]]) {
+for (const [label, val, want] of [["a quoted number", "100", 100], ["a quoted number above the range", "5000", 1024], ["a quoted number below the range", "2", 8]]) {
   const dir = profile({ [J]: { transcriptLimits: true, transcriptLimitsMainMiB: val } });
   const L = load(dir).g.__cdbTranscriptLimits();
   ok(L.mainBytes === want * MIB, label + " is read like coworkGlowOpacity reads one (" + JSON.stringify(val) + " -> " + want + " MiB)");
@@ -174,6 +184,104 @@ for (const [label, val] of [["text", "lots"], ["an empty string", ""], ["null", 
   const L = load(dir).g.__cdbTranscriptLimits();
   ok(L.mainBytes === 256 * MIB, "a value that is not a number (" + label + ") falls back to the default");
   rmSync(dir, { recursive: true, force: true });
+}
+// An unusable value does not shadow a usable one: it is skipped like an absent key,
+// so the next source answers instead of the default.
+{
+  const dir = profile({ [JC]: { transcriptLimits: true, transcriptLimitsMainMiB: "lots" }, [J]: { transcriptLimitsMainMiB: 300 } });
+  ok(load(dir).g.__cdbTranscriptLimits().mainBytes === 300 * MIB,
+     "a non-number in the .jsonc falls through to a valid number in the .json, not to the default");
+  rmSync(dir, { recursive: true, force: true });
+}
+{
+  const dir = profile({ [JC]: { transcriptLimits: true, transcriptLimitsSubagentMiB: null }, [J]: { transcriptLimitsSubagentMiB: "250" } });
+  ok(load(dir).g.__cdbTranscriptLimits().subagentBytes === 250 * MIB,
+     "...for the subagent number too, quoted or not");
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// --- 4a. memory: the cache TOTAL follows the V8 heap; the per-session ceiling never does ---
+// Upstream gives the subagents only what is left under the per-session ceiling after
+// the main transcript, so lowering THAT ceiling to fit a small heap would silently
+// re-truncate agent activity. Only the total (how many sessions stay cached) gives.
+{
+  const dir = profile({ [J]: { transcriptLimits: true } });       // 256 + 192 = 448 MiB
+  const m = load(dir, { heap: 1 * GIB });                         // 40% = 409 MiB
+  const L = m.g.__cdbTranscriptLimits();
+  ok(L.cachedEntryBytes === 560 * MIB,
+     "small heap (1 GiB): the per-session ceiling stays 1.25x (main + subagents) = 560 MiB");
+  ok(L.cachedTotalBytes === 560 * MIB,
+     "small heap (1 GiB): the total shrinks to one session (40% of the heap is below the ceiling) instead of 1120 MiB");
+  ok(m.env.CDB_TRANSCRIPT_LIMITS === [L.mainBytes, L.subagentBytes, L.cachedEntryBytes, L.cachedTotalBytes].join(","),
+     "small heap: the worker gate carries the capped total too");
+  await tick();
+  const warns = m.logs.filter((l) => /WARNING/.test(l));
+  ok(warns.length === 1 && /448 MiB is more than 40% of this process's 1024 MiB V8 heap limit/.test(warns[0]) &&
+     /may exhaust memory/.test(warns[0]) && /transcriptLimitsMainMiB/.test(warns[0]),
+     "small heap: one warning line says the load may exhaust memory and names the keys to lower: " + warns[0]);
+  m.g.__cdbTranscriptLimits(); m.g.__cdbTranscriptLimits();
+  ok(m.logs.filter((l) => /WARNING/.test(l)).length === 1, "...and it is written once, not per hand-out");
+  ok(m.logs.some((l) => /560 MiB per session \/ 560 MiB total \(total capped by the 1024 MiB V8 heap limit\)/.test(l)),
+     "small heap: the hand-out line says the total was capped and by what");
+  rmSync(dir, { recursive: true, force: true });
+}
+{
+  const dir = profile({ [J]: { transcriptLimits: true } });
+  const m = load(dir, { heap: 2 * GIB });                         // 40% = 819 MiB
+  const L = m.g.__cdbTranscriptLimits();
+  await tick();
+  ok(L.cachedEntryBytes === 560 * MIB && L.cachedTotalBytes === 819 * MIB,
+     "2 GiB heap: ceiling 560 MiB, total capped at floor(40% of the heap) = 819 MiB (between one and two sessions)");
+  ok(m.logs.every((l) => !/WARNING/.test(l)), "2 GiB heap: 448 MiB is under 40% of the heap, so no warning");
+  rmSync(dir, { recursive: true, force: true });
+}
+{
+  const dir = profile({ [J]: { transcriptLimits: true } });
+  const m = load(dir, { heap: 8 * GIB });
+  await tick();
+  m.g.__cdbTranscriptLimits();
+  ok(m.g.__cdbTranscriptLimits().cachedTotalBytes === 1120 * MIB, "large heap (8 GiB): the plain 2x total (1120 MiB) is under the cap");
+  ok(m.logs.every((l) => !/WARNING/.test(l) && !/capped/.test(l)), "large heap: no warning and no 'capped' note");
+  rmSync(dir, { recursive: true, force: true });
+}
+for (const [label, heap] of [["getHeapStatistics() throws", "throw"], ["heap_size_limit is missing", "missing"],
+  ["heap_size_limit is 0", 0], ["heap_size_limit is not a number", "big"]]) {
+  const dir = profile({ [J]: { transcriptLimits: true } });
+  const m = load(dir, { heap });
+  const L = m.g.__cdbTranscriptLimits();
+  await tick();
+  ok(L.cachedEntryBytes === 560 * MIB && L.cachedTotalBytes === 1120 * MIB && m.logs.every((l) => !/WARNING/.test(l)),
+     "heap unknown (" + label + "): falls back to the plain 2x total, no warning");
+  rmSync(dir, { recursive: true, force: true });
+}
+{
+  // OFF passes nothing, whatever the heap: no limits, no warning.
+  const dir = profile({ [J]: { transcriptLimitsMainMiB: 1024, transcriptLimitsSubagentMiB: 1024 } });
+  const m = load(dir, { heap: 1 * GIB });
+  await tick();
+  ok(m.g.__cdbTranscriptLimits() === undefined && m.logs.every((l) => !/WARNING/.test(l)),
+     "OFF on a small heap: nothing handed out and nothing warned, even with large numbers saved");
+  rmSync(dir, { recursive: true, force: true });
+}
+{
+  // The invariants, over a grid of numbers and heaps.
+  let bad = [];
+  for (const heap of [512 * MIB, 1 * GIB, 2 * GIB, 4 * GIB, 16 * GIB, "throw"]) {
+    for (const [mn, sb] of [[8, 8], [50, 32], [256, 192], [512, 384], [1024, 1024], [8, 1024], [1024, 8]]) {
+      const dir = profile({ [J]: { transcriptLimits: true, transcriptLimitsMainMiB: mn, transcriptLimitsSubagentMiB: sb } });
+      const L = load(dir, { heap }).g.__cdbTranscriptLimits();
+      const load_ = L.mainBytes + L.subagentBytes;
+      const tag = mn + "/" + sb + "@" + (heap === "throw" ? heap : heap / MIB);
+      if (L.cachedEntryBytes !== Math.ceil((mn + sb) * 1.25) * MIB) bad.push(tag + " ceiling not 1.25x");
+      if (L.cachedEntryBytes < load_) bad.push(tag + " ceiling < main + subagents");
+      if (L.cachedTotalBytes < L.cachedEntryBytes) bad.push(tag + " total < ceiling");
+      if (L.cachedTotalBytes > 2 * L.cachedEntryBytes) bad.push(tag + " total > 2x ceiling");
+      if (typeof heap === "number" && L.cachedTotalBytes > Math.max(L.cachedEntryBytes, heap * 0.4)) bad.push(tag + " total over 40% of the heap");
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  ok(bad.length === 0, "over 42 number/heap pairs: ceiling = 1.25x (main + subagents) >= what is loaded, " +
+     "ceiling <= total <= 2x ceiling, and total <= max(ceiling, 40% of the heap)" + (bad.length ? ": " + bad.join("; ") : ""));
 }
 
 // --- 4b. a misspelled key is ignored, exactly as every other feature's config is ----------

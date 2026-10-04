@@ -36,8 +36,17 @@
  * one session's whole load (main + subagents) or it re-truncates the main window
  * to the ceiling, shrinks the subagent budget to what is left, and falls back to
  * a full reload instead of reading only appended bytes on every update.
- * Anthropic's own proportions are 50 + 32 MiB -> 100 per session (~1.22x) and a
- * 200 MiB total (2x that); we keep them, rounding the first up to 1.25x.
+ * Upstream sizes the per-session cache 2x main (100 MiB, about 1.22x main +
+ * subagents) and the total 2x that (200 MiB). We size the per-session cache
+ * 1.25x main + subagents, so it is never smaller than what is loaded, and the
+ * total 2x that - capped by this process's V8 heap (see derive()).
+ *
+ * MEMORY: the main process runs with V8's default heap limit, which scales with
+ * host RAM (about 1 GiB on a 2 GB machine, 2 GiB on 4-8 GB, 4 GiB on 16 GB+), and
+ * two managers live in it (the session manager and the sidebar's reader), each
+ * with its own cache. So the numbers are clamped to 8..1024 MiB, the cache TOTAL
+ * shrinks on a small heap (fewer sessions stay cached; nothing is truncated), and
+ * the log warns when one session's load alone is a large share of the heap.
  *
  * SECURITY: the caller is remote claude.ai code. Every handler validates the
  * sender's ORIGIN (not a substring test of the URL - see okSender below) and
@@ -65,8 +74,11 @@
   // Both directions are allowed: a weak machine may want LESS than Anthropic's
   // numbers. Outside this range a number is clamped, as coworkGlowOpacity is.
   var MIN_MIB = 8;
-  var MAX_MIB = 4096;
+  var MAX_MIB = 1024;
   var MIB = 1048576;
+  // Share of the V8 heap limit the parse-cache TOTAL may take, and the point at
+  // which one session's load (main + subagents) earns a warning in the log.
+  var HEAP_SHARE = 0.4;
   var ENV_NAME = "CDB_TRANSCRIPT_LIMITS";
   var JSONC_NAME = "claude-desktop-extra.jsonc";
   var JSON_NAME = "claude-desktop-extra.json";
@@ -119,7 +131,8 @@
     return null;
   }
   function isBool(v) { return typeof v === "boolean"; }
-  function isSet(v) { return v !== undefined; }
+  function toNum(v) { return typeof v === "number" ? v : parseFloat(v); }
+  function isNum(v) { return isFinite(toNum(v)); }
 
   function readConfig() {
     var jsonc = readFileJson(pathFor(JSONC_NAME));
@@ -127,16 +140,13 @@
     var en = pick(jsonc, json, PREF_KEY, isBool);
     // Same as coworkGlowOpacity (patches/community/add_feature_cowork_glow.nim):
     // a number, or a string parseFloat can read (a quoted "512" is an easy slip in
-    // hand-edited JSON), is clamped into range; anything else falls back to the
-    // default. Nothing here warns - the effective numbers are what the row and the
-    // startup log show.
+    // hand-edited JSON), is clamped into range; anything else is skipped, so the
+    // next source (.jsonc, then .json, then the default) answers instead. Nothing
+    // here warns - the effective numbers are what the row and the startup log show.
     function mib(key, dflt) {
-      var hit = pick(jsonc, json, key, isSet);
+      var hit = pick(jsonc, json, key, isNum);
       if (!hit) return dflt;
-      var v = hit.value;
-      var n = typeof v === "number" ? v : parseFloat(v);
-      if (!isFinite(n)) return dflt;
-      return Math.round(Math.min(MAX_MIB, Math.max(MIN_MIB, n)));
+      return Math.round(Math.min(MAX_MIB, Math.max(MIN_MIB, toNum(hit.value))));
     }
     return {
       enabled: en ? en.value : PREF_DEFAULT,
@@ -146,21 +156,40 @@
     };
   }
 
-  // See the header: per-session ceiling >= main + subagents (1.25x for headroom
-  // while a live session grows), total = 2x the per-session ceiling.
-  function derive(mainMiB, subagentMiB) {
+  // This process's V8 heap limit in bytes, or null when it cannot be read.
+  function heapLimitBytes() {
+    try {
+      var n = require("v8").getHeapStatistics().heap_size_limit;
+      return typeof n === "number" && isFinite(n) && n > 0 ? n : null;
+    } catch (e) { return null; }
+  }
+
+  // See the header. Per-session ceiling = 1.25x (main + subagents), headroom while
+  // a live session grows. It is NEVER lowered to fit the heap: upstream gives the
+  // subagents only what is left under that ceiling after the main transcript, so
+  // a smaller one would silently re-truncate agent activity. Only the TOTAL
+  // gives: 2x the ceiling, capped at HEAP_SHARE of the heap limit but never below
+  // one session, so a small machine keeps fewer sessions cached instead of
+  // running out of memory. Heap unknown -> plain 2x.
+  function derive(mainMiB, subagentMiB, heapBytes) {
     var entry = Math.ceil((mainMiB + subagentMiB) * 1.25);
+    var total = entry * 2;
+    if (heapBytes) total = Math.max(entry, Math.min(total, Math.floor(heapBytes * HEAP_SHARE / MIB)));
     return {
       mainBytes: mainMiB * MIB,
       subagentBytes: subagentMiB * MIB,
       cachedEntryBytes: entry * MIB,
-      cachedTotalBytes: entry * 2 * MIB
+      cachedTotalBytes: total * MIB
     };
   }
 
   // What this process hands out for its whole life. Read once here, at startup.
   var startup = readConfig();
-  var active = startup.enabled ? derive(startup.mainMiB, startup.subagentMiB) : null;
+  var heapBytes = heapLimitBytes();
+  var active = startup.enabled ? derive(startup.mainMiB, startup.subagentMiB, heapBytes) : null;
+  // One session's load alone above HEAP_SHARE of the heap earns a log warning.
+  var heapWarn = !!(active && heapBytes &&
+    active.mainBytes + active.subagentBytes > heapBytes * HEAP_SHARE);
 
   var handedOut = 0, handedPending = [];
   globalThis.__cdbTranscriptLimits = function () {
@@ -319,11 +348,13 @@
   // never write until the logger exists: the "installed" line and each hand-out
   // are queued and flushed as soon as it does (polled, then on every hand-out).
   var announced = false, tries = 0;
+  function heapMiB() { return Math.round(heapBytes / MIB); }
   function summary() {
-    return active
-      ? "on: main " + startup.mainMiB + " MiB, subagents " + startup.subagentMiB + " MiB, parse cache " +
-        (active.cachedEntryBytes / MIB) + " MiB per session / " + (active.cachedTotalBytes / MIB) + " MiB total"
-      : "off - passing nothing, Anthropic's limits apply";
+    if (!active) return "off - passing nothing, Anthropic's limits apply";
+    var capped = active.cachedTotalBytes < active.cachedEntryBytes * 2;
+    return "on: main " + startup.mainMiB + " MiB, subagents " + startup.subagentMiB + " MiB, parse cache " +
+      (active.cachedEntryBytes / MIB) + " MiB per session / " + (active.cachedTotalBytes / MIB) + " MiB total" +
+      (capped ? " (total capped by the " + heapMiB() + " MiB V8 heap limit)" : "");
   }
   function flushLog() {
     if (typeof globalThis.__cdbDiag !== "function") return false;
@@ -331,6 +362,12 @@
       announced = true;
       log("installed (main); " + PREF_KEY + "=" + (active ? "on" : "off") + " (source: " + startup.source +
         ")" + (active ? "" : " - Anthropic's limits untouched"));
+      if (heapWarn) {
+        log("WARNING: main + subagents = " + (startup.mainMiB + startup.subagentMiB) + " MiB is more than " +
+          Math.round(HEAP_SHARE * 100) + "% of this process's " + heapMiB() + " MiB V8 heap limit - opening " +
+          "a session that large may exhaust memory and crash the app; lower " + MAIN_KEY + " / " +
+          SUBAGENT_KEY + " in " + JSONC_NAME);
+      }
     }
     while (handedPending.length) {
       log("session manager #" + handedPending.shift() + " asked for limits -> " + summary());

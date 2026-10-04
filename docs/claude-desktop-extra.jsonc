@@ -62,9 +62,10 @@
   // "transcriptLimits": true,
 
   // transcriptLimitsMainMiB / transcriptLimitsSubagentMiB: what "true" allows, in
-  // MiB, clamped to 8..4096 (defaults 256 and 192; lower them on a machine with little RAM). The
-  // parse cache is sized from these automatically. Only used while transcriptLimits
-  // is true. Hand edits need a restart.
+  // MiB, clamped to 8..1024 (defaults 256 and 192). Large values cost memory and
+  // can crash the app on a machine with little RAM, so lower them there. The parse
+  // cache is sized from these automatically. Only used while transcriptLimits is
+  // true. Hand edits need a restart.
   // "transcriptLimitsMainMiB": 512,
   // "transcriptLimitsSubagentMiB": 384,
 

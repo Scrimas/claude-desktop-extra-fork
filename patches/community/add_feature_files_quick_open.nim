@@ -6,7 +6,8 @@
 #      (js/files_quick_open_page.js) embedded, at the head of the bundle;
 #   B) makes the generic utility-process host fork its workers with main's LIVE
 #      environment, which is what carries the CDB_FILES_QUICK_OPEN gate to the
-#      file-index worker.
+#      file-index worker - and the CDB_TRANSCRIPT_LIMITS numbers to the
+#      heavy-work worker (second consumer, see below).
 # Counterparts: patches/community/add_feature_files_quick_open_bridge.nim
 # (preload) and patches/community/add_feature_files_quick_open_worker.nim
 # (file index).
@@ -23,13 +24,22 @@
 # transcript-search, heavy-work, stall-sampler, ...) now inherits main's live env -
 # which is what the default was assumed to do anyway.
 #
-# What that widens: `Object.assign({},process.env)` forwards not just our gate but
-# everything upstream itself writes into main's env after startup - measured on
-# 1.37937.3: `CLAUDE_CODE_SESSION_ACCESS_TOKEN` and `CLAUDE_CONFIG_DIR` - to all
-# four of those workers, which the initial-env default did not. Same user, same
-# app, same trust domain (no process/user boundary is crossed), so this is an
-# exposure-surface widening rather than a boundary crossing; noted here because
-# it is the one behavioural side effect of B beyond the gate it was written for.
+# SECOND CONSUMER: add_feature_transcript_limits.nim hands its numbers to the
+# heavy-work worker as CDB_TRANSCRIPT_LIMITS over this same pass-through. It does
+# not carry its own copy of B (that copy would take an "already" branch on a
+# pristine bundle, which the absorption probe blocks); it asserts B's end state as
+# a precondition and fails the build without it, so it must keep sorting AFTER
+# this file in basename order. Retiring Files quick open therefore means MOVING
+# sub-patch B (e.g. into that patch), not deleting it.
+#
+# What that widens: `Object.assign({},process.env)` forwards not just our two
+# keys but everything upstream itself writes into main's env after startup -
+# measured on 1.37937.3: `CLAUDE_CODE_SESSION_ACCESS_TOKEN` and
+# `CLAUDE_CONFIG_DIR` - to all four of those workers, which the initial-env
+# default did not. Same user, same app, same trust domain (no process/user
+# boundary is crossed), so this is an exposure-surface widening rather than a
+# boundary crossing; noted here because it is a side effect of B that neither
+# consumer needs.
 #
 # The other three fork sites in the bundle are NOT touched and cannot match this
 # anchor: `Claude Desktop Shell Environment Extractor` (no stdio option), the MCP
@@ -106,6 +116,8 @@ proc apply*(input: string): string =
       inc patchesApplied
 
   # --- B: pass main's live env to the generic worker host ----------------------
+  # Also load-bearing for add_feature_transcript_limits.nim, which asserts this
+  # end state as a precondition (see the header): keep B even if A ever goes.
   let already = endStateCount(result)
   if already == 1:
     echo "  [OK] files quick open: worker host already forks with main's env (idempotent)"

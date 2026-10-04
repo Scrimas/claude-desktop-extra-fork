@@ -393,10 +393,15 @@ async function featuresPanel(featuresItem) {
     ok(tl.getAttribute("aria-checked") === "true", "the switch reflects the write");
     ok(tlState() === "on - 256 MiB main, 192 MiB subagents after a restart",
        "switching on while the app runs off says a restart is owed: " + tlState());
+    const tlToast = function () { const t = document.querySelector(".cdbx-toast"); return t ? t.textContent : ""; };
+    ok(tlToast() === "Large sessions on - restart Claude Desktop to apply",
+       "the toast for a change the running app does not have asks for a restart: " + tlToast());
     tl.click();
     await sleep(60);
     ok(tlState() === "off - Anthropic's limits",
        "switching straight back stops claiming a restart is owed: " + tlState());
+    ok(tlToast() === "Large sessions off - no restart needed",
+       "...and so does its toast, from the main side's pendingRestart: " + tlToast());
   }
 
   // --- the two window modes. Three mutually exclusive outcomes behind two
@@ -1785,7 +1790,13 @@ window.cdbExtra = {
   // (renderToggleRow answers nothing when its bridge half is missing), so a
   // harness that omits them would pass while never rendering the row.
   transcriptLimitsRead: function () { return Promise.resolve(window.__tlState || { ok: true, enabled: false, lockedByJsonc: false, source: "default", mainMiB: 256, subagentMiB: 192, activeNow: false, activeMainMiB: null, activeSubagentMiB: null, pendingRestart: false }); },
-  transcriptLimitsSet: function (enabled) { window.__tlCalls = (window.__tlCalls || []).concat([enabled]); return Promise.resolve({ ok: true, enabled: enabled }); },
+  // Answers pendingRestart the way the main side does: owed while the saved
+  // switch differs from what the running app was started with (activeNow).
+  transcriptLimitsSet: function (enabled) {
+    window.__tlCalls = (window.__tlCalls || []).concat([enabled]);
+    var running = !!(window.__tlState && window.__tlState.activeNow);
+    return Promise.resolve({ ok: true, enabled: enabled, pendingRestart: enabled !== running });
+  },
   // The two window modes. Three fields the page treats as three different
   // facts, so a fixture that conflated any of them could not tell the states
   // apart: "enabled" is the SAVED setting, "active" what this window was built

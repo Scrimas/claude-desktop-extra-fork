@@ -1272,10 +1272,13 @@
         return pending ? "off - Anthropic's limits after a restart" : "off - Anthropic's limits";
       },
       writeArg: function (next) { return next; },
-      toast: function (next) {
-        return next
-          ? "Large sessions on - restart Claude Desktop to apply"
-          : "Large sessions off - restart Claude Desktop to apply";
+      // r.pendingRestart is the main side's answer; only an explicit false (the
+      // switch is back where the running app started) drops the restart wording.
+      toast: function (next, r) {
+        var label = next ? "Large sessions on" : "Large sessions off";
+        return r && r.pendingRestart === false
+          ? label + " - no restart needed"
+          : label + " - restart Claude Desktop to apply";
       },
       errorPrefix: "Could not change large-session loading: "
     });
