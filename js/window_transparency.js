@@ -52,7 +52,29 @@
   var JSONC_NAME = "claude-desktop-extra.jsonc";
   var JSON_NAME = "claude-desktop-extra.json";
 
-  function log(m) { (globalThis.__cdbDiag || console.log)("[window-transparency] " + m); }
+  // __cdbDiag (claude-patches.log) is defined inside upstream's app "ready"
+  // handler, which runs after this IIFE, and console.log is discarded by the
+  // official build. So a line logged before the sink exists is queued and
+  // flushed one tick after "ready"; console.log stays the last resort for a
+  // build without the CU patch that defines the sink. Only WHERE a line goes
+  // waits for "ready" - nothing here delays what this module installs.
+  var logQueue = [];
+  function emitLog(line) {
+    try { (globalThis.__cdbDiag || console.log)(line); } catch (e) {}
+  }
+  function flushLog() {
+    var q = logQueue;
+    logQueue = null;
+    for (var i = 0; q && i < q.length; i++) emitLog(q[i]);
+  }
+  function log(m) {
+    var line = "[window-transparency] " + m;
+    if (logQueue && typeof globalThis.__cdbDiag !== "function") { logQueue.push(line); return; }
+    flushLog();
+    emitLog(line);
+  }
+  try { _electron.app.whenReady().then(function () { setTimeout(flushLog, 0); }, function () {}); }
+  catch (e) { setTimeout(flushLog, 0); }
 
   function pathFor(name) {
     try { (globalThis.__cdbCfgMigrate || function () {})(); } catch (e) {}
@@ -357,7 +379,9 @@
   });
 
   globalThis.__cdbWinTrans = true;
-  // __cdbDiag does not exist yet at injection time; defer one tick.
+  // The startup line is computed one tick after load, as before. __cdbDiag is
+  // still missing then (it only appears once upstream's "ready" handler runs),
+  // so log() queues the line and flushLog() delivers it after "ready".
   setTimeout(function () {
     log("installed; saved=" + savedOn() + ", opacity=" + alpha() +
       (envOn() !== null ? ", CLAUDE_WINDOW_TRANSPARENCY forces " + envOn() : ""));
