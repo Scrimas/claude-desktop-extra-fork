@@ -188,7 +188,7 @@ Runtime logs are in `~/.config/Claude/logs/`. When 3P mode is active (an `infere
 - `claude-patches.log` - OUR patch diagnostics (`[claude-cu]`, `[quick-entry]`, `[CustomThemes]`, ...), 2 MiB rotation to `.old`, also mirrored to fd 2.
 - `main.log` (Electron main), `claude.ai-web.log` (web content), `cowork_vm_node.log` (Cowork VM), `mcp.log` + `mcp-server-*.log`.
 
-**Do NOT rely on `console.log` in main-process patch code** - the official `.deb` build discards console/`process.stdout` writes. Use `globalThis.__cdbDiag(...)` (defined in `js/cu_mode_preamble.js`), or `(globalThis.__cdbDiag||console.log)(...)` in patches that must not depend on the CU patch. The Cowork/Dispatch debug recipe (audit.jsonl, dispatch log greps) is the `/debug` skill.
+**Do NOT rely on `console.log` in main-process patch code** - the official `.deb` build discards console/`process.stdout` writes. Use `globalThis.__cdbDiag(...)` (defined in `js/cu_mode_preamble.js`), or `(globalThis.__cdbDiag||console.log)(...)` in patches that must not depend on the CU patch. `__cdbDiag` only exists once upstream's `ready` handler runs, so a line logged at module load must be queued until then (see the log helper in `js/window_controls_main.js`). The Cowork/Dispatch debug recipe (audit.jsonl, dispatch log greps) is the `/debug` skill.
 
 ## Feature flags
 

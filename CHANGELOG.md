@@ -2,40 +2,30 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-10-04
+
+### Load large sessions in full (thanks @rmbruntz, #263)
+
+- New community feature: Settings -> Extra -> Community Features -> **Load
+  large sessions in full** (off by default). Claude Desktop only loads the last
+  50 MiB of a Code session's transcript plus 32 MiB of subagent activity and
+  hides the rest behind "This session is too large to load in full", which
+  sessions with many inline browser screenshots reach within hours. With the
+  switch on, the limits are 256 MiB and 192 MiB; `transcriptLimitsMainMiB` and
+  `transcriptLimitsSubagentMiB` (8-1024) change them. Off leaves every upstream
+  limit as shipped. Takes effect after a restart.
+- Large sessions cost memory: the session cache is sized to the machine's
+  memory, so a small machine keeps fewer sessions cached instead of running out.
+
+### Fixes
+
+- The startup lines of Files quick open, panel tabs, diff views, window controls
+  and transparent window now reach `claude-patches.log`. They were written before
+  the log was ready and got lost.
+- `scripts/validate-patches.sh` applies patches in the build's order, so a patch
+  that builds on an earlier one validates the same way it builds.
+
 ## 2026-10-03
-
-### Load large sessions in full (new community feature)
-
-- New `add_feature_transcript_limits` and `add_feature_transcript_limits_worker`,
-  behind a switch in Settings -> Extra -> Community Features (off by default).
-  Claude Desktop only loads the last 50 MiB of a Code session's transcript, plus
-  one shared 32 MiB for all of that session's subagent transcripts, and hides the
-  rest behind "Earlier messages aren't shown. This session is too large to load
-  in full." (the start of the conversation, including your own first prompt) or
-  "Some agent activity isn't shown. ..." (the subagents' step-by-step work). Long
-  sessions with many inline browser screenshots reach that within hours: a
-  screenshot is typically 0.4 MB of base64 (the tool scales it to about 2000 px
-  wide), the main transcript stores each tool result twice and subagent
-  transcripts once, so roughly 60 to 80 screenshots reach a limit. With the
-  switch on, the limits are 256 MiB and 192 MiB; with it off, nothing changes
-  and every limit stays exactly as Anthropic ships it.
-- Numbers are optional config keys, like `coworkGlowOpacity`:
-  `transcriptLimitsMainMiB` and `transcriptLimitsSubagentMiB` (clamped to 8..4096
-  like `coworkGlowOpacity` is clamped to 0..1, so a machine with little RAM can go
-  lower than Anthropic's own values). The two
-  parse-cache ceilings are derived from them in Anthropic's own proportions, so
-  they cannot be set inconsistently. Takes effect after a restart; the row says
-  so while a restart is owed.
-- Mechanism: the session manager already accepts an optional `loadLimits`
-  setting that the app never sets. This feeds it at both construction sites, so
-  one hook covers the loader and the "too large" notice check, with no
-  rewriting of Anthropic's numbers. The heavy-work utility process, which bundles
-  its own copy, gets the same numbers through an env var. Anchors are config
-  property names, which survive minification. The constructor anchor
-  (`onTranscriptTruncatedChanged:`, 2 sites, and the manager reading
-  `loadLimits`) and the worker's limits object (`mainBytes:`) were checked in
-  upstream 1.52386.6, 2.2553.1 and 2.9939.4, the limits object also in 1.37937.3,
-  with different variable names in each.
 
 ### Transparent window (thanks @mike-899, #262)
 

@@ -9,7 +9,7 @@ when_to_use: When the user asks what the project does, how the pieces fit, what 
 Repackages Anthropic's **official Claude Desktop Linux `.deb`** for the distros Anthropic does not ship (Arch via our own pacman repo, Fedora/RHEL, NixOS, AppImage) and for our own Debian/Ubuntu `.deb`, while layering a small set of **Linux-only value-adds** that the official build does not provide. See `/linux` for compat specifics.
 
 ## What we start from: the official Linux .deb
-Anthropic publishes an official Claude Desktop build for Linux as a `.deb` in an apt repo (`https://downloads.claude.ai/claude-desktop/apt`). It bundles its own Electron (42.5.1) and ships a **native Cowork VM backend** (cowork-linux-helper + virtiofsd + smol-bin + QEMU/OVMF; requires `/dev/kvm`). The official build natively supports Chat, Code, Cowork, Computer Use is in beta upstream, and reads managed config from `/etc/claude-desktop/managed-settings.json`. We do **not** patch the Windows MSIX any more - that pipeline is gone.
+Anthropic publishes an official Claude Desktop build for Linux as a `.deb` in an apt repo (`https://downloads.claude.ai/claude-desktop/apt`). It bundles its own Electron (44.4.3 as of v2.9939.4; authoritative: the deb's `usr/lib/claude-desktop/version`) and ships a **native Cowork VM backend** (cowork-linux-helper + virtiofsd + smol-bin + QEMU/OVMF; requires `/dev/kvm`). The official build natively supports Chat, Code, Cowork, Computer Use is in beta upstream, and reads managed config from `/etc/claude-desktop/managed-settings.json`. We do **not** patch the Windows MSIX any more - that pipeline is gone.
 
 ## What this repo does: ingest -> patch -> repackage
 **Ingest:** download the official `.deb` (apt repo, or `--deb PATH`/`--version X`) -> verify GPG + SHA256 -> `dpkg-deb -x` -> locate `usr/lib/claude-desktop/resources/app.asar` -> `asar extract`.
@@ -42,7 +42,7 @@ Historically this project shipped a sibling Go daemon (`claude-cowork-service`, 
 
 ## How it fits
 ```
-Anthropic official Claude Desktop Linux .deb  (Electron 42.5.1 + native Cowork VM backend)
+Anthropic official Claude Desktop Linux .deb  (own Electron + native Cowork VM backend)
         │  download → verify GPG+SHA256 → dpkg-deb -x → asar extract
         ▼
 claude-desktop-extra  (54 JS patches: Linux fixes + Computer Use + themes + profiles + Quick Entry)
