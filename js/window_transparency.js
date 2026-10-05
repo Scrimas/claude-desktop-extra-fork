@@ -244,6 +244,12 @@
       // rest of the app uses. It is a page-level panel, not a card to read on,
       // so it takes surface-1 at the window alpha like everything else.
       "html .bg-surface-2.rounded-card{background-color:" + mix("--cds-surface-1") + "!important}" +
+      // ...but a design-system Dialog is a card too and has exactly those two
+      // classes (the Settings modal is one). It must stay solid: whatever is
+      // mounted on it directly - the Extra settings panel does that when upstream's
+      // markup changes - would otherwise show the page behind the dialog. The
+      // extra attribute makes this the more specific rule, whatever the order.
+      "html [data-cds=Dialog].bg-surface-2{background-color:var(--cds-surface-2)!important}" +
       "html .bg-surface-3,html .bg-surface-popover{background-color:var(--cds-surface-3)!important}" +
       "html [role=menu],html [role=listbox]{background-color:var(--cds-surface-3)!important}" +
       "html [class*=approval-dock]{background:transparent!important}" +

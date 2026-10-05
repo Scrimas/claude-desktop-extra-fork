@@ -30,6 +30,10 @@ All notable changes to the claude-desktop-extra packages will be documented in t
   and took over the entire pane: the close button went with it, and the panel
   sat on the dialog card instead of on the pane's own background. The search now
   goes down through wrappers, and only the scrolling body is replaced.
+- Transparent window: dialog cards, the Settings modal among them, stay solid.
+  They share their classes with the Claude Code content card, which fades with
+  the window, so the page behind showed through anything mounted directly on a
+  dialog.
 
 ## 2026-10-03
 
