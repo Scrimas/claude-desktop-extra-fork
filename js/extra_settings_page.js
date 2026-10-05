@@ -356,27 +356,47 @@
     return null;
   }
 
-  // Take over the pane's SCROLLING BODY rather than the whole pane: in the
-  // capture the pane's first child is the header row that carries the modal's
-  // close button, and hiding that would trap the user in the dialog. Anchored on
-  // computed overflow, not on a class, and only accepted when that child is most
-  // of the pane - otherwise the pane itself is the honest answer.
+  // Take over the pane's SCROLLING BODY rather than the whole pane: the pane's
+  // first child is the header row that carries the modal's close button, and
+  // hiding that would trap the user in the dialog. Anchored on computed overflow,
+  // not on a class, and only accepted when that element is most of the pane -
+  // otherwise the pane itself is the honest answer.
+  //
+  // The scroller is not always a child of the pane: in a live v2.9939.4 capture it
+  // sits under a `display: contents` wrapper and a flex column. Looking only at
+  // the pane's children found nothing there, hid the WHOLE pane and mounted our
+  // panel straight on the dialog card - no close button, and on a see-through
+  // window (windowTransparency) no background either. So the search goes down one
+  // level at a time and the shallowest scroller that is big enough wins; a
+  // nested code block or table that scrolls is never reached while a wider
+  // scroller sits above it.
+  var SCROLL_SEARCH_DEPTH = 4;
   function scrollBody(pane) {
     var total = area(pane);
     if (!total) return null;
-    var best = null;
-    var bestArea = 0;
-    for (var i = 0; i < pane.children.length; i++) {
-      var kid = pane.children[i];
-      if (kid.classList.contains("cdbx-panel")) continue;
-      var style = null;
-      try { style = getComputedStyle(kid); } catch (e) {}
-      if (!style) continue;
-      if (style.overflowY !== "auto" && style.overflowY !== "scroll") continue;
-      var a = area(kid);
-      if (a > bestArea) { bestArea = a; best = kid; }
+    var level = [pane];
+    for (var depth = 0; depth < SCROLL_SEARCH_DEPTH && level.length; depth++) {
+      var next = [];
+      var best = null;
+      var bestArea = 0;
+      for (var n = 0; n < level.length; n++) {
+        var kids = level[n].children;
+        for (var i = 0; i < kids.length; i++) {
+          var kid = kids[i];
+          if (kid.classList.contains("cdbx-panel") || isOurs(kid)) continue;
+          next.push(kid);
+          var style = null;
+          try { style = getComputedStyle(kid); } catch (e) {}
+          if (!style) continue;
+          if (style.overflowY !== "auto" && style.overflowY !== "scroll") continue;
+          var a = area(kid);
+          if (a > bestArea) { bestArea = a; best = kid; }
+        }
+      }
+      if (best && bestArea >= total * 0.5) return best;
+      level = next;
     }
-    return best && bestArea >= total * 0.5 ? best : null;
+    return null;
   }
 
   // The row to clone: an UNSELECTED cell of the group we insert next to, so its

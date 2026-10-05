@@ -99,7 +99,18 @@ function group(header, items) {
       <ul class="${LIST_CLS}">${items.join("")}</ul>`;
 }
 
-function dialog(navInner) {
+// `nested` is the pane as Anthropic ships it now (captured from a live v2.9939.4
+// install): the scrolling body is no longer a direct child of the pane. Between
+// them sit a `display: contents` wrapper and a flex column, so a search that only
+// looks at the pane's children finds no scroller and hides the WHOLE pane -
+// header, close button and solid background included.
+function dialog(navInner, nested) {
+  const paneInner = nested
+    ? `<div class="panehead"><button type="button" id="close-btn">close</button></div>
+    <div class="subhead"></div>
+    <div class="contents"><div class="wrapcol"><div id="panebody" class="panebody">upstream settings sections</div></div></div>`
+    : `<div class="panehead"><button type="button" id="close-btn">close</button></div>
+    <div id="panebody" class="panebody">upstream settings sections</div>`;
   return `
 <div role="dialog" tabindex="-1" data-cds="Dialog" class="dialog" aria-labelledby="ttl">
   <nav aria-label="Settings" class="navcol">
@@ -108,8 +119,7 @@ function dialog(navInner) {
     <div id="navbox" class="navbox">${navInner}</div>
   </nav>
   <div id="pane" class="pane">
-    <div class="panehead"><button type="button" id="close-btn">close</button></div>
-    <div id="panebody" class="panebody">upstream settings sections</div>
+    ${paneInner}
   </div>
 </div>`;
 }
@@ -118,7 +128,7 @@ function dialog(navInner) {
 // button as the capture does; without it only the class swap is left, which is
 // the harder path. `ambiguous` makes a second row deviate from the shared class
 // shape, so no selected row can be identified at all.
-const FIXTURE_REAL = (attr, ambiguous) => dialog(`
+const FIXTURE_REAL = (attr, ambiguous, nested) => dialog(`
       ${group("Settings", [
         item("General", { selected: true, attr }),
         item("Account", { badge: ambiguous }),
@@ -134,7 +144,7 @@ const FIXTURE_REAL = (attr, ambiguous) => dialog(`
       ])}
       ${group("Customize", [item("Skills")])}
       <div class="${HDR_CLS}">Example Org</div>
-      <a id="row-org" href="/admin-settings/organization" class="orglink">${icon()}<span class="${LABEL_CLS}">Organization</span>${icon("text-muted")}</a>`);
+      <a id="row-org" href="/admin-settings/organization" class="orglink">${icon()}<span class="${LABEL_CLS}">Organization</span>${icon("text-muted")}</a>`, nested);
 
 // Scenario 4: real rows and real lists, but no group header text we know. There
 // is nothing to insert next to, so our rows are appended to the LAST list behind
@@ -1259,15 +1269,19 @@ async function assertPanelMounts(item) {
   ok(document.getElementById("pane").style.display !== "none",
      "the content pane itself stays visible, so the close button survives");
   ok(!!document.getElementById("close-btn").offsetParent, "the close button is still rendered");
-  ok(panel.parentElement === document.getElementById("pane"),
+  ok(panel.parentElement === body.parentElement,
      "our panel is a sibling of the pane's scrolling body");
+  ok(document.getElementById("pane").contains(panel),
+     "and it sits inside the content pane, on the pane's own background");
   const box = panel.getBoundingClientRect();
   ok(box.height > 100 && box.height <= 600,
      "our panel fits inside the dialog instead of stretching it (" + box.height + ")");
 }
 
 async function run() {
-  const kind = window.__fixture;
+  // "<kind>-nested" is the same scenario on the nested pane shape (see dialog()).
+  const nested = /-nested$/.test(window.__fixture);
+  const kind = window.__fixture.replace(/-nested$/, "");
   const real = kind.indexOf("real") === 0;
   const items = ourItems();
   const box = navbox();
@@ -1597,6 +1611,9 @@ function html(fixture, name) {
   .navbox { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; gap: 8px; overflow-y: auto; padding: 0 12px 12px; }
   .pane { display: flex; min-height: 0; min-width: 0; flex: 1 1 auto; flex-direction: column; }
   .panehead { display: flex; flex: 0 0 auto; height: 44px; align-items: center; padding: 0 12px; }
+  .subhead { flex: 0 0 auto; height: 12px; }
+  .contents { display: contents; }
+  .wrapcol { position: relative; display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; }
   .panebody { position: relative; min-height: 0; flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 8px 24px 20px; }
   .orglink { display: flex; height: 32px; align-items: center; gap: 8px; border-radius: 6px; padding: 0 8px; color: #555; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
@@ -1876,6 +1893,8 @@ const scenarios = [
   ["real", FIXTURE_REAL(true, false)],
   ["real-classonly", FIXTURE_REAL(false, false)],
   ["real-ambiguous", FIXTURE_REAL(false, true)],
+  ["real-nested", FIXTURE_REAL(true, false, true)],
+  ["real-classonly-nested", FIXTURE_REAL(false, false, true)],
   ["es-testid", FIXTURE_ES(true)],
   ["es-labels", FIXTURE_ES(false)],
   ["no-headers", FIXTURE_NO_HEADERS],

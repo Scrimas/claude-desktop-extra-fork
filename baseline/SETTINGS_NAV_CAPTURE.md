@@ -33,7 +33,11 @@ without a Claude Desktop release. It is the ground truth for:
 6. **One group ("Example Org") is a header followed by a bare `<a>`**, with no `<ul>` at all. Tolerate it,
    and keep it out of the selected-look diff - its class shape differs from a settings row's.
 7. **The content pane is the dialog's second flex child**, and its **first** child is the header row
-   carrying the close button. Only the `px-xl` scrolling body is taken over, so that button survives.
+   carrying the close button. Only the scrolling body is taken over, so that button survives. **Where
+   the scroller sits has changed:** in v1.24012.9 it is a direct child of the pane; in v2.9939.4 it is
+   `div.contents` > flex column > scroller (see "Content pane, v2.9939.4" below). It is therefore found
+   by computed `overflow-y` and size, a level at a time, never by being a child of the pane. Taking
+   the pane itself instead (the fallback) loses the close button and the pane's solid background.
 
 ## What to re-check when it drifts
 
@@ -131,3 +135,30 @@ content pane's first two levels), update this file, then refit the fixtures in
   </div>
 </div>
 ```
+
+### Content pane, v2.9939.4
+
+**Captured from:** a live Claude Desktop **v2.9939.4** session, 2026-10-04 (the pane carries
+`data-perf-region="settings_panel"`). Skeleton only, class strings verbatim, text omitted. The
+scrolling body is no longer a child of the pane:
+
+```html
+<div data-perf-region="settings_panel" class="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-2">
+  <div class="flex shrink-0 items-center justify-between pl-xl pr-md pt-md pb-sm"><!-- title + close button --></div>
+  <div class="shrink-0 px-xl"></div>
+  <div class="contents">                                  <!-- display: contents - no box, zero area -->
+    <div class="relative flex min-h-0 flex-1 flex-col">
+      <div class="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-xl pb-lg pt-2 [scrollbar-gutter:stable] ...">
+        <div aria-hidden="true" class="pointer-events-none sticky -top-2 z-[1] -mx-xl -mt-2 h-2 bg-gradient-to-b from-[var(--cds-surface-2)] to-transparent"></div>
+        <div class="flex flex-col"><!-- sections --></div>
+      </div>
+    </div>
+  </div>
+</div>
+```
+
+The dialog card around it is `role="dialog" data-cds="Dialog"` with `bg-surface-2 rounded-card`, the same
+two classes the transparent-window stylesheet fades for the Claude Code content card
+(`js/window_transparency.js`). The pane's own `bg-surface-2` is what keeps native tabs solid on a
+see-through window; a panel mounted on the dialog card instead sees the page through it.
+Fixtures `real-nested` and `real-classonly-nested` in `test-extra-settings-dom.mjs` model this shape.
