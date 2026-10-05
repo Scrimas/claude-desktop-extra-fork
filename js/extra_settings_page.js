@@ -1398,9 +1398,10 @@
   // The main window's see-through mode. The switch is constructor-only
   // (transparent cannot be flipped on a built window), so it says "restart" and,
   // while a flip is still owed, carries its own "Restart now" next to the
-  // switch. The opacity slider below it is live: windowOpacityPreview re-styles
-  // the window while it is dragged, windowOpacitySet saves windowOpacity when it
-  // is released. Blur is the compositor's job.
+  // switch. The transparency slider below it is live:
+  // windowTransparencyLevelPreview re-styles the window while it is dragged,
+  // windowTransparencyLevelSet saves windowTransparencyLevel when it is
+  // released. Blur is the compositor's job.
   function renderWindowTransparencyRow(panel) {
     var wtRes = null;
     var restart = null;
@@ -1422,7 +1423,8 @@
       title: "Transparent window",
       note: "Makes the main window see-through so the desktop - and any blur your compositor " +
         "(Hyprland, KWin, ...) applies behind it - shows through the sidebar and the chat area. " +
-        "The slider sets how opaque the surfaces stay and applies live. A transparent window has " +
+        "The Transparency slider sets how see-through the surfaces are (higher is more see-through) " +
+        "and applies live. A transparent window has " +
         "no minimize/maximize/close buttons and no shadow: close and maximize through your window " +
         "manager (Alt+F4 and friends) and resize by dragging the outermost few pixels of the window. " +
         "On X11 a compositor must be running, or the window turns black. Needs the integrated " +
@@ -1468,30 +1470,32 @@
       aside.insertBefore(restart, aside.firstChild);
     }
     var main = node && node.querySelector(".cdbx-row-main");
-    if (main && typeof api.windowOpacityPreview === "function" && typeof api.windowOpacitySet === "function") {
-      slider = renderOpacitySlider(main);
+    if (main && typeof api.windowTransparencyLevelPreview === "function" &&
+        typeof api.windowTransparencyLevelSet === "function") {
+      slider = renderTransparencySlider(main);
       if (wtRes) slider.load(wtRes);
     }
     return row;
   }
 
-  // The opacity slider of the Transparent window row: 10-100 % in steps of 5.
-  // `input` previews (throttled to one call in flight plus the latest value),
-  // `change` saves. Disabled, with the reason, while the .jsonc or
-  // CLAUDE_WINDOW_OPACITY decides the value. Built disabled; load() fills it in
-  // from the row's read response.
-  function renderOpacitySlider(main) {
+  // The transparency slider of the Transparent window row: 0-90 % in steps of
+  // 5, higher = more see-through. `input` previews (throttled to one call in
+  // flight plus the latest value), `change` saves. Disabled, with the reason,
+  // while the .jsonc or an env variable decides the value (named as read, so a
+  // legacy windowOpacity / CLAUDE_WINDOW_OPACITY is named as such). Built
+  // disabled; load() fills it in from the row's read response.
+  function renderTransparencySlider(main) {
     var wrap = el("div", "cdbx-range");
     var input = el("input", "cdbx-range-input");
     input.type = "range";
-    input.min = "10";
-    input.max = "100";
+    input.min = "0";
+    input.max = "90";
     input.step = "5";
-    input.value = "80";
+    input.value = "20";
     input.disabled = true;
-    input.setAttribute("aria-label", "transparent window opacity");
-    var value = el("span", "cdbx-range-val", "80%");
-    wrap.appendChild(el("span", "cdbx-range-label", "Opacity"));
+    input.setAttribute("aria-label", "transparent window transparency");
+    var value = el("span", "cdbx-range-val", "20%");
+    wrap.appendChild(el("span", "cdbx-range-label", "Transparency"));
     wrap.appendChild(input);
     wrap.appendChild(value);
     main.appendChild(wrap);
@@ -1499,12 +1503,12 @@
     main.appendChild(hint);
 
     var res = null;
-    var saved = 0.8;
+    var saved = 0.2;
     var inFlight = false;
     var queued = null;
 
-    function pct(a) { return Math.round(a * 100); }
-    function show(a) { value.textContent = pct(a) + "%"; }
+    function pct(l) { return Math.round(l * 100); }
+    function show(l) { value.textContent = pct(l) + "%"; }
     function current() { return Math.round(Number(input.value)) / 100; }
     function live() { return !!res && res.active === true; }
     function idleHint() {
@@ -1513,11 +1517,11 @@
 
     // One preview in flight at a time; while it runs, only the newest value is
     // kept, so a fast drag costs a handful of restyles, not one per pixel.
-    function preview(a) {
+    function preview(l) {
       if (!live()) return;
-      if (inFlight) { queued = a; return; }
+      if (inFlight) { queued = l; return; }
       inFlight = true;
-      api.windowOpacityPreview(a).then(done, done);
+      api.windowTransparencyLevelPreview(l).then(done, done);
       function done() {
         inFlight = false;
         if (queued !== null) { var q = queued; queued = null; preview(q); }
@@ -1525,43 +1529,47 @@
     }
 
     input.addEventListener("input", function () {
-      var a = current();
-      show(a);
-      preview(a);
+      var l = current();
+      show(l);
+      preview(l);
     });
     input.addEventListener("change", function () {
-      var a = current();
+      var l = current();
       queued = null;
-      api.windowOpacitySet(a).then(function (r) {
+      api.windowTransparencyLevelSet(l).then(function (r) {
         if (failed(r)) {
           input.value = String(pct(saved));
           show(saved);
           preview(saved);
-          toast("Could not change the opacity: " + reason(r), true);
+          toast("Could not change the transparency: " + reason(r), true);
           return;
         }
-        saved = typeof r.opacity === "number" ? r.opacity : a;
-        if (res) res.opacity = saved;
+        saved = typeof r.level === "number" ? r.level : l;
+        if (res) res.level = saved;
         input.value = String(pct(saved));
         show(saved);
         hint.textContent = idleHint();
-        if (!live()) toast("Opacity " + pct(saved) + "% saved - it applies once the transparent window is active");
+        if (!live()) toast("Transparency " + pct(saved) + "% saved - it applies once the transparent window is active");
       }, function (err) {
         input.value = String(pct(saved));
         show(saved);
-        toast("Could not change the opacity: " + (err && err.message ? err.message : String(err)), true);
+        toast("Could not change the transparency: " + (err && err.message ? err.message : String(err)), true);
       });
     });
 
     return {
       load: function (r) {
         res = r;
-        if (typeof r.opacity === "number" && isFinite(r.opacity)) saved = r.opacity;
+        if (typeof r.level === "number" && isFinite(r.level)) saved = r.level;
         input.value = String(pct(saved));
         show(saved);
-        var why = r.opacityEnvForced === true
-          ? "Set by CLAUDE_WINDOW_OPACITY - unset it to change this here"
-          : (r.opacityLocked === true ? "Set in claude-desktop-extra.jsonc - edit that file to change this" : "");
+        var envName = typeof r.levelSetBy === "string" && /^CLAUDE_/.test(r.levelSetBy)
+          ? r.levelSetBy : "CLAUDE_WINDOW_TRANSPARENCY_LEVEL";
+        var keyName = typeof r.levelSetBy === "string" && /^window/.test(r.levelSetBy)
+          ? r.levelSetBy : "windowTransparencyLevel";
+        var why = r.levelEnvForced === true
+          ? "Set by " + envName + " - unset it to change this here"
+          : (r.levelLocked === true ? "Set by " + keyName + " in claude-desktop-extra.jsonc - edit that file to change this" : "");
         input.disabled = !!why;
         input.title = why;
         hint.textContent = why || idleHint();

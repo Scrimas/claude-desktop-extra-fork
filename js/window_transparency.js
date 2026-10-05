@@ -3,11 +3,19 @@
  * main bundle by patches/community/add_feature_window_transparency.nim.
  *
  * Two keys in <userData>/claude-desktop-extra.json(c):
- *   windowTransparency  bool    default false   (env CLAUDE_WINDOW_TRANSPARENCY=1|0)
- *   windowOpacity       number  default 0.8     (env CLAUDE_WINDOW_OPACITY=0.1..1)
+ *   windowTransparency       bool    default false  (env CLAUDE_WINDOW_TRANSPARENCY=1|0)
+ *   windowTransparencyLevel  number  default 0.2    (env CLAUDE_WINDOW_TRANSPARENCY_LEVEL=0..0.9)
  *
  * Precedence for both: env > .jsonc (hand-owned, locks the Settings control)
  * > .json (written by Settings -> Extra) > default.
+ *
+ * The level is how see-through the surfaces are (0 = solid, 0.9 = most
+ * see-through); the CSS works with its complement, alpha = 1 - level. The
+ * previous release's opacity key `windowOpacity` (0.1..1) and env
+ * CLAUDE_WINDOW_OPACITY are still read, converted to a level: the legacy env
+ * ranks below the new env, and in each file the new key wins over the legacy
+ * one. A legacy key in the .jsonc locks the slider like the new one; a save
+ * from Settings writes the new key and drops the legacy one from the .json.
  *
  * What it does when on:
  *   1. The main BrowserWindow is created with transparent:true and a fully
@@ -22,10 +30,10 @@
  *      transparent, so a theme flip cannot bring the solid background back.
  *   3. A stylesheet is inserted into the window's own shell page and into its
  *      claude.ai view that clears the page background and gives the visible
- *      surfaces (sidebar, bg-surface-N) an alpha of windowOpacity. Blur behind
+ *      surfaces (sidebar, bg-surface-N) an alpha of 1 - level. Blur behind
  *      the window is the COMPOSITOR's job (Hyprland decoration:blur, KWin
  *      "Blur" effect, ...) - the app only has to stop being opaque.
- *   4. The opacity slider in Settings -> Extra swaps that claude.ai stylesheet
+ *   4. The transparency slider in Settings -> Extra swaps that claude.ai stylesheet
  *      live (insertCSS the new alpha, removeInsertedCSS the old key); only the
  *      on/off switch needs a restart.
  *
@@ -52,9 +60,12 @@
   var _URL = require("url").URL;
 
   var KEY_ON = "windowTransparency";
-  var KEY_ALPHA = "windowOpacity";
-  var ALPHA_DEFAULT = 0.8;
-  var ALPHA_MIN = 0.1;
+  var KEY_LEVEL = "windowTransparencyLevel";
+  var KEY_LEGACY = "windowOpacity";
+  var ENV_LEVEL = "CLAUDE_WINDOW_TRANSPARENCY_LEVEL";
+  var ENV_LEGACY = "CLAUDE_WINDOW_OPACITY";
+  var LEVEL_DEFAULT = 0.2;
+  var LEVEL_MAX = 0.9;
   var JSONC_NAME = "claude-desktop-extra.jsonc";
   var JSON_NAME = "claude-desktop-extra.json";
 
@@ -118,23 +129,47 @@
     if (raw === undefined || raw === null || raw === "") return null;
     return raw === "1";
   }
-  function clampAlpha(n) {
-    if (typeof n !== "number" || !isFinite(n)) return ALPHA_DEFAULT;
-    return Math.min(1, Math.max(ALPHA_MIN, n));
+  function round3(n) { return Math.round(n * 1000) / 1000; }
+  function clampLevel(n) {
+    if (typeof n !== "number" || !isFinite(n)) return LEVEL_DEFAULT;
+    return round3(Math.min(LEVEL_MAX, Math.max(0, n)));
   }
-  // CLAUDE_WINDOW_OPACITY as a number, or null when unset or not numeric (an
-  // unusable value falls through to the files, as it always has).
-  function envAlpha() {
+  // A legacy opacity (0.1..1) as a level.
+  function fromOpacity(n) { return clampLevel(1 - n); }
+  function envNum(name) {
     var raw;
-    try { raw = process.env.CLAUDE_WINDOW_OPACITY; } catch (e) { return null; }
+    try { raw = process.env[name]; } catch (e) { return null; }
     if (raw === undefined || raw === null || raw === "" || !isFinite(parseFloat(raw))) return null;
-    return clampAlpha(parseFloat(raw));
+    return parseFloat(raw);
   }
-  function alpha() {
-    var env = envAlpha();
-    if (env !== null) return env;
-    return clampAlpha(readKey(KEY_ALPHA, "number").value);
+  // The env override as { value, name }, or null when neither variable holds a
+  // number (an unusable value falls through to the files, as it always has).
+  function envLevel() {
+    var n = envNum(ENV_LEVEL);
+    if (n !== null) return { value: clampLevel(n), name: ENV_LEVEL };
+    n = envNum(ENV_LEGACY);
+    if (n !== null) return { value: fromOpacity(n), name: ENV_LEGACY };
+    return null;
   }
+  // Where the level comes from: { value, source, name } with source "env",
+  // "jsonc-locked", "json" or "default" and name the variable or key that
+  // decides it (the legacy one when that is what is set).
+  function levelInfo() {
+    var env = envLevel();
+    if (env) return { value: env.value, source: "env", name: env.name };
+    var files = [JSONC_NAME, JSON_NAME];
+    for (var i = 0; i < files.length; i++) {
+      var cfg = readFileJson(pathFor(files[i]));
+      if (!cfg) continue;
+      var src = i === 0 ? "jsonc-locked" : "json";
+      if (typeof cfg[KEY_LEVEL] === "number") return { value: clampLevel(cfg[KEY_LEVEL]), source: src, name: KEY_LEVEL };
+      if (typeof cfg[KEY_LEGACY] === "number") return { value: fromOpacity(cfg[KEY_LEGACY]), source: src, name: KEY_LEGACY };
+    }
+    return { value: LEVEL_DEFAULT, source: "default", name: KEY_LEVEL };
+  }
+  function level() { return levelInfo().value; }
+  function alphaOf(l) { return round3(1 - l); }
+  function alpha() { return alphaOf(level()); }
   function savedOn() { return readKey(KEY_ON, "boolean").value === true; }
 
   // Memoized for the life of the process: the window was built with this
@@ -172,7 +207,7 @@
       active = on;
       if (!on) return {};
       pendingMain = true;
-      log("main window built transparent (opacity " + alpha() + ")");
+      log("main window built transparent (transparency " + level() + ")");
       return { transparent: true, backgroundColor: "#00000000" };
     } catch (e) {
       log("options hook failed: " + ((e && e.message) || e));
@@ -315,7 +350,7 @@
     return false;
   }
 
-  // ---- live opacity ----------------------------------------------------------
+  // ---- live transparency ----------------------------------------------------------
   // Every claude.ai webContents that carries our see-through stylesheet, with
   // the key insertCSS resolved to and the alpha it was built with. insertCSS is
   // per-DOCUMENT, so a navigation (a new dom-ready) inserts afresh and replaces
@@ -406,10 +441,15 @@
     } catch (e) { return false; }
   }
 
-  // Writes ONE key of the .json (undefined deletes it), tmp + rename, every
-  // other key preserved; refuses to touch a file it cannot parse instead of
-  // discarding the user's other settings.
+  // Writes keys of the .json in one go - `changes` maps key -> value, undefined
+  // deletes the key - tmp + rename, every other key preserved; refuses to touch
+  // a file it cannot parse instead of discarding the user's other settings.
   function writeKey(key, value) {
+    var c = {};
+    c[key] = value;
+    return writeKeys(c);
+  }
+  function writeKeys(changes) {
     var p = pathFor(JSON_NAME);
     if (!p) return { ok: false, error: "no userData path" };
     var raw = null;
@@ -427,7 +467,10 @@
       }
       if (s !== raw) { try { _fs.writeFileSync(p + ".cdb-bak", raw, { flag: "wx" }); } catch (e3) {} }
     }
-    if (value === undefined) delete cfg[key]; else cfg[key] = value;
+    for (var key in changes) {
+      if (!Object.prototype.hasOwnProperty.call(changes, key)) continue;
+      if (changes[key] === undefined) delete cfg[key]; else cfg[key] = changes[key];
+    }
     var tmp = p + ".cdb-tmp";
     try {
       _fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + "\n", "utf8");
@@ -439,39 +482,35 @@
     return { ok: true, path: p };
   }
 
-  // Where the opacity comes from: "env", "jsonc-locked", "json" or "default".
-  function opacitySource() {
-    if (envAlpha() !== null) return "env";
-    return readKey(KEY_ALPHA, "number").source;
-  }
-  // Why Settings may not change the opacity right now, or null.
-  function opacityRefusal() {
-    var src = opacitySource();
-    if (src === "env") return "CLAUDE_WINDOW_OPACITY is set - unset it to change the opacity here";
-    if (src === "jsonc-locked") return KEY_ALPHA + " is set in " + JSONC_NAME + " - edit that file to change it";
+  // Why Settings may not change the level right now, or null.
+  function levelRefusal() {
+    var info = levelInfo();
+    if (info.source === "env") return info.name + " is set - unset it to change the transparency here";
+    if (info.source === "jsonc-locked") return info.name + " is set in " + JSONC_NAME + " - edit that file to change it";
     return null;
   }
-  // A finite number, clamped to 0.1..1 and rounded to 0.001; null otherwise.
-  function opacityArg(v) {
+  // A finite number, clamped to 0..0.9 and rounded to 0.001; null otherwise.
+  function levelArg(v) {
     if (typeof v !== "number" || !isFinite(v)) return null;
-    return Math.round(clampAlpha(v) * 1000) / 1000;
+    return clampLevel(v);
   }
-  var BAD_OPACITY = "opacity must be a number from " + ALPHA_MIN + " to 1";
+  var BAD_LEVEL = "transparency must be a number from 0 to " + LEVEL_MAX;
 
   var ipc = _electron.ipcMain;
   ipc.handle("cdb-wt:pref-read", function (ev) {
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
     var disk = readKey(KEY_ON, "boolean");
     var env = envOn();
-    var oSrc = opacitySource();
+    var lv = levelInfo();
     return {
       ok: true,
       enabled: disk.value === true,
       active: active,
-      opacity: alpha(),
-      opacitySource: oSrc,
-      opacityLocked: oSrc === "jsonc-locked",
-      opacityEnvForced: oSrc === "env",
+      level: lv.value,
+      levelSource: lv.source,
+      levelSetBy: lv.name,
+      levelLocked: lv.source === "jsonc-locked",
+      levelEnvForced: lv.source === "env",
       lockedByJsonc: disk.source === "jsonc-locked",
       source: disk.source,
       envForced: env !== null,
@@ -480,29 +519,33 @@
   });
   // Slider dragged: re-style the window, write nothing. `live` is how many
   // webContents now carry the new alpha (0 while the window is not transparent).
-  ipc.handle("cdb-wt:opacity-preview", function (ev, value) {
+  ipc.handle("cdb-wt:level-preview", function (ev, value) {
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
-    var a = opacityArg(value);
-    if (a === null) return { ok: false, error: BAD_OPACITY };
-    var no = opacityRefusal();
+    var l = levelArg(value);
+    if (l === null) return { ok: false, error: BAD_LEVEL };
+    var no = levelRefusal();
     if (no) return { ok: false, error: no };
-    if (active !== true) return { ok: true, opacity: a, active: active, live: 0 };
-    liveAlpha = a;
-    return applyLive().then(function (n) { return { ok: true, opacity: a, active: active, live: n }; });
+    if (active !== true) return { ok: true, level: l, active: active, live: 0 };
+    liveAlpha = alphaOf(l);
+    return applyLive().then(function (n) { return { ok: true, level: l, active: active, live: n }; });
   });
-  // Slider released: persist windowOpacity to the .json, then re-style.
-  ipc.handle("cdb-wt:opacity-set", function (ev, value) {
+  // Slider released: persist windowTransparencyLevel to the .json (dropping a
+  // legacy windowOpacity there in the same write), then re-style.
+  ipc.handle("cdb-wt:level-set", function (ev, value) {
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
-    var a = opacityArg(value);
-    if (a === null) return { ok: false, error: BAD_OPACITY };
-    var no = opacityRefusal();
+    var l = levelArg(value);
+    if (l === null) return { ok: false, error: BAD_LEVEL };
+    var no = levelRefusal();
     if (no) return { ok: false, error: no };
-    var w = writeKey(KEY_ALPHA, a);
+    var changes = {};
+    changes[KEY_LEVEL] = l;
+    changes[KEY_LEGACY] = undefined;
+    var w = writeKeys(changes);
     if (!w.ok) return w;
     liveAlpha = null;
-    log("pref " + KEY_ALPHA + " set to " + a + " (" + w.path + ")" + (active === true ? " - applied live" : ""));
-    if (active !== true) return { ok: true, opacity: a, active: active, live: 0, path: w.path };
-    return applyLive().then(function (n) { return { ok: true, opacity: a, active: active, live: n, path: w.path }; });
+    log("pref " + KEY_LEVEL + " set to " + l + " (" + w.path + ")" + (active === true ? " - applied live" : ""));
+    if (active !== true) return { ok: true, level: l, active: active, live: 0, path: w.path };
+    return applyLive().then(function (n) { return { ok: true, level: l, active: active, live: n, path: w.path }; });
   });
   ipc.handle("cdb-wt:pref-set", function (ev, enabled) {
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
@@ -521,7 +564,7 @@
   // still missing then (it only appears once upstream's "ready" handler runs),
   // so log() queues the line and flushLog() delivers it after "ready".
   setTimeout(function () {
-    log("installed; saved=" + savedOn() + ", opacity=" + alpha() +
+    log("installed; saved=" + savedOn() + ", transparency=" + level() +
       (envOn() !== null ? ", CLAUDE_WINDOW_TRANSPARENCY forces " + envOn() : ""));
   }, 0);
 })();

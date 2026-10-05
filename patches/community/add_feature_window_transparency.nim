@@ -3,15 +3,17 @@
 #
 # Translucent main window, opt-in (default OFF): `windowTransparency` in
 # claude-desktop-extra.json(c), switched from Settings -> Extra -> Community
-# Features, or CLAUDE_WINDOW_TRANSPARENCY=1|0; `windowOpacity` (0.1..1, default
-# 0.8) / CLAUDE_WINDOW_OPACITY sets how see-through the surfaces are; the
-# Settings row's slider changes it live. Blur behind the window is left to the
-# compositor (Hyprland, KWin, ...).
+# Features, or CLAUDE_WINDOW_TRANSPARENCY=1|0; `windowTransparencyLevel`
+# (0..0.9, default 0.2, higher = more see-through) /
+# CLAUDE_WINDOW_TRANSPARENCY_LEVEL sets how see-through the surfaces are (the
+# legacy `windowOpacity` / CLAUDE_WINDOW_OPACITY are still read as 1 - value);
+# the Settings row's Transparency slider changes it live. Blur behind the
+# window is left to the compositor (Hyprland, KWin, ...).
 #
 # Two sub-patches:
 #   A. js/window_transparency.js injected at the head of the main bundle:
 #      the options hook, the theme-flip guards, the CSS injection with its live
-#      opacity swap, and the Settings IPC handlers.
+#      transparency swap, and the Settings IPC handlers.
 #   B. The main window's options literal gets `...globalThis.__cdbWinTransExtra()`
 #      spliced in right after upstream's `backgroundColor:<fn>(),opacity:<v>,`
 #      pair. It spreads AFTER backgroundColor, so its `transparent` and

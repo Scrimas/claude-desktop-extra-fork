@@ -596,9 +596,10 @@ async function featuresPanel(featuresItem) {
   }
 
   // --- Transparent window: the switch owes a restart and gets its own Restart
-  // now while it does; the opacity slider previews on input and saves on
+  // now while it does; the transparency slider previews on input and saves on
   // change, applies live only on a window built transparent, and refuses while
-  // the .jsonc or CLAUDE_WINDOW_OPACITY decides the value.
+  // the .jsonc or an env variable decides the value, naming the one that does
+  // (the legacy windowOpacity / CLAUDE_WINDOW_OPACITY included).
   {
     const wtSel = ".cdbx-switch[aria-label='make the main window transparent']";
     featuresItem.click();
@@ -613,9 +614,10 @@ async function featuresPanel(featuresItem) {
       const hint = function () { return wtRow.querySelector(".cdbx-range-hint").textContent; };
       const rs = Array.from(wtRow.querySelectorAll(".cdbx-row-aside .cdbx-btn"))
         .filter(function (b) { return b.textContent === "Restart now"; })[0];
-      ok(!!range && range.min === "10" && range.max === "100" && range.step === "5",
-         "the row carries a 10-100 % opacity slider in steps of 5");
-      ok(range && range.value === "80" && val() === "80%", "showing the saved 80 %: " + val());
+      ok(!!range && range.min === "0" && range.max === "90" && range.step === "5",
+         "the row carries a 0-90 % transparency slider in steps of 5");
+      ok(wtRow.querySelector(".cdbx-range-label").textContent === "Transparency", "labelled Transparency");
+      ok(range && range.value === "20" && val() === "20%", "showing the saved 20 %: " + val());
       ok(range && !range.disabled, "usable while nothing locks the value");
       ok(hint() === "Saved now - applies once the transparent window is active",
          "on an opaque window the slider says it saves for later: " + hint());
@@ -640,18 +642,19 @@ async function featuresPanel(featuresItem) {
       range.dispatchEvent(new Event("input"));
       await sleep(40);
       ok(val() === "50%", "dragging updates the label: " + val());
-      ok(!(window.__wopPreview || []).length, "no preview while the window is not transparent");
+      ok(!(window.__wtlPreview || []).length, "no preview while the window is not transparent");
       range.dispatchEvent(new Event("change"));
       await sleep(60);
-      ok(window.__wopSet && window.__wopSet.length === 1 && window.__wopSet[0] === 0.5,
-         "releasing saves 0.5: " + JSON.stringify(window.__wopSet));
+      ok(window.__wtlSet && window.__wtlSet.length === 1 && window.__wtlSet[0] === 0.5,
+         "releasing saves 0.5: " + JSON.stringify(window.__wtlSet));
     }
 
     // Built transparent: input previews live, change saves.
-    window.__wtState = { ok: true, enabled: true, active: true, opacity: 0.6, opacitySource: "json", opacityLocked: false,
-      opacityEnvForced: false, lockedByJsonc: false, source: "json", envForced: false, nativeTitlebar: false };
-    window.__wopPreview = [];
-    window.__wopSet = [];
+    window.__wtState = { ok: true, enabled: true, active: true, level: 0.6, levelSource: "json",
+      levelSetBy: "windowTransparencyLevel", levelLocked: false, levelEnvForced: false, lockedByJsonc: false,
+      source: "json", envForced: false, nativeTitlebar: false };
+    window.__wtlPreview = [];
+    window.__wtlSet = [];
     featuresItem.click();
     await sleep(200);
     const wtRow2 = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
@@ -663,35 +666,41 @@ async function featuresPanel(featuresItem) {
     range2.value = "40";
     range2.dispatchEvent(new Event("input"));
     await sleep(40);
-    ok(window.__wopPreview.length >= 1 && window.__wopPreview[window.__wopPreview.length - 1] === 0.4,
-       "input previews the new alpha live: " + JSON.stringify(window.__wopPreview));
-    ok(window.__wopSet.length === 0, "and a preview saves nothing");
+    ok(window.__wtlPreview.length >= 1 && window.__wtlPreview[window.__wtlPreview.length - 1] === 0.4,
+       "input previews the new level live: " + JSON.stringify(window.__wtlPreview));
+    ok(window.__wtlSet.length === 0, "and a preview saves nothing");
     range2.dispatchEvent(new Event("change"));
     await sleep(60);
-    ok(window.__wopSet.length === 1 && window.__wopSet[0] === 0.4, "change saves it: " + JSON.stringify(window.__wopSet));
+    ok(window.__wtlSet.length === 1 && window.__wtlSet[0] === 0.4, "change saves it: " + JSON.stringify(window.__wtlSet));
 
     // Locked by the .jsonc, then forced by the env var: disabled, with the why.
-    window.__wtState = Object.assign({}, window.__wtState, { opacitySource: "jsonc-locked", opacityLocked: true });
-    featuresItem.click();
-    await sleep(200);
-    let row3 = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
-    ok(row3.querySelector("input[type=range]").disabled &&
-       row3.querySelector(".cdbx-range-hint").textContent === "Set in claude-desktop-extra.jsonc - edit that file to change this",
-       "a .jsonc windowOpacity disables the slider and says where it is set");
-    window.__wtState = Object.assign({}, window.__wtState, { opacitySource: "env", opacityLocked: false, opacityEnvForced: true });
-    featuresItem.click();
-    await sleep(200);
-    row3 = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
-    ok(row3.querySelector("input[type=range]").disabled &&
-       /CLAUDE_WINDOW_OPACITY/.test(row3.querySelector(".cdbx-range-hint").textContent),
-       "CLAUDE_WINDOW_OPACITY disables it too, naming the variable");
+    const lockedRow = async function (patch) {
+      window.__wtState = Object.assign({}, window.__wtState, patch);
+      featuresItem.click();
+      await sleep(200);
+      const r = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
+      return { disabled: r.querySelector("input[type=range]").disabled, hint: r.querySelector(".cdbx-range-hint").textContent };
+    };
+    let lk = await lockedRow({ levelSource: "jsonc-locked", levelSetBy: "windowTransparencyLevel", levelLocked: true });
+    ok(lk.disabled && lk.hint === "Set by windowTransparencyLevel in claude-desktop-extra.jsonc - edit that file to change this",
+       "a .jsonc windowTransparencyLevel disables the slider and says where it is set: " + lk.hint);
+    lk = await lockedRow({ levelSource: "jsonc-locked", levelSetBy: "windowOpacity", levelLocked: true });
+    ok(lk.disabled && lk.hint === "Set by windowOpacity in claude-desktop-extra.jsonc - edit that file to change this",
+       "a legacy .jsonc windowOpacity locks it too, named as such: " + lk.hint);
+    lk = await lockedRow({ levelSource: "env", levelSetBy: "CLAUDE_WINDOW_TRANSPARENCY_LEVEL", levelLocked: false, levelEnvForced: true });
+    ok(lk.disabled && lk.hint === "Set by CLAUDE_WINDOW_TRANSPARENCY_LEVEL - unset it to change this here",
+       "CLAUDE_WINDOW_TRANSPARENCY_LEVEL disables it, naming the variable: " + lk.hint);
+    lk = await lockedRow({ levelSource: "env", levelSetBy: "CLAUDE_WINDOW_OPACITY", levelLocked: false, levelEnvForced: true });
+    ok(lk.disabled && /^Set by CLAUDE_WINDOW_OPACITY /.test(lk.hint),
+       "the legacy CLAUDE_WINDOW_OPACITY is named when it decides: " + lk.hint);
 
     // A switch forced by CLAUDE_WINDOW_TRANSPARENCY: no restart can close the gap.
-    window.__wtState = { ok: true, enabled: false, active: true, opacity: 0.8, opacitySource: "default", opacityLocked: false,
-      opacityEnvForced: false, lockedByJsonc: false, source: "default", envForced: true, nativeTitlebar: false };
+    window.__wtState = { ok: true, enabled: false, active: true, level: 0.2, levelSource: "default",
+      levelSetBy: "windowTransparencyLevel", levelLocked: false, levelEnvForced: false, lockedByJsonc: false,
+      source: "default", envForced: true, nativeTitlebar: false };
     featuresItem.click();
     await sleep(200);
-    row3 = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
+    const row3 = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
     ok(row3.querySelector(".cdbx-row-aside .cdbx-btn").classList.contains("cdbx-hide"),
        "no Restart now when CLAUDE_WINDOW_TRANSPARENCY decides the run");
     window.__wtState = null;
@@ -1935,13 +1944,13 @@ window.cdbExtra = {
   windowControlsSet: function (enabled) { window.__wcCalls = (window.__wcCalls || []).concat([enabled]); return Promise.resolve({ ok: true, enabled: enabled, path: "/tmp/window-controls.json" }); },
   nativeTitlebarRead: function () { return Promise.resolve(window.__ntState || { ok: true, enabled: false, active: false, lockedByJsonc: false, source: "default", envForced: false }); },
   nativeTitlebarSet: function (enabled) { window.__ntCalls = (window.__ntCalls || []).concat([enabled]); return Promise.resolve({ ok: true, enabled: enabled, path: "/tmp/window-controls.json" }); },
-  // Transparent window: the switch plus the live opacity slider. "active" is
-  // what this window was built with, the opacity* fields say who decides the
-  // value (.jsonc lock, CLAUDE_WINDOW_OPACITY) so the slider can refuse.
-  windowTransparencyRead: function () { return Promise.resolve(window.__wtState || { ok: true, enabled: false, active: false, opacity: 0.8, opacitySource: "default", opacityLocked: false, opacityEnvForced: false, lockedByJsonc: false, source: "default", envForced: false, nativeTitlebar: false }); },
+  // Transparent window: the switch plus the live transparency slider. "active"
+  // is what this window was built with, the level* fields say who decides the
+  // value (.jsonc lock, env variable, by name) so the slider can refuse.
+  windowTransparencyRead: function () { return Promise.resolve(window.__wtState || { ok: true, enabled: false, active: false, level: 0.2, levelSource: "default", levelSetBy: "windowTransparencyLevel", levelLocked: false, levelEnvForced: false, lockedByJsonc: false, source: "default", envForced: false, nativeTitlebar: false }); },
   windowTransparencySet: function (enabled) { window.__wtCalls = (window.__wtCalls || []).concat([enabled]); return Promise.resolve({ ok: true, enabled: enabled, path: "/tmp/wt.json" }); },
-  windowOpacityPreview: function (v) { window.__wopPreview = (window.__wopPreview || []).concat([v]); return Promise.resolve({ ok: true, opacity: v, live: 1 }); },
-  windowOpacitySet: function (v) { window.__wopSet = (window.__wopSet || []).concat([v]); return Promise.resolve({ ok: true, opacity: v, path: "/tmp/wt.json" }); },
+  windowTransparencyLevelPreview: function (v) { window.__wtlPreview = (window.__wtlPreview || []).concat([v]); return Promise.resolve({ ok: true, level: v, live: 1 }); },
+  windowTransparencyLevelSet: function (v) { window.__wtlSet = (window.__wtlSet || []).concat([v]); return Promise.resolve({ ok: true, level: v, path: "/tmp/wt.json" }); },
   diffViewsRead: function () { return Promise.resolve(window.__diffViewsState); },
   diffViewsSet: function (enabled) {
     window.__diffViewsCalls.push(enabled);

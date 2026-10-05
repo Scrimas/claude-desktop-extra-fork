@@ -4,12 +4,15 @@ All notable changes to the claude-desktop-extra packages will be documented in t
 
 ## 2026-10-05
 
-### Transparent window: live opacity slider
+### Transparent window: live transparency slider
 
-- Settings -> Extra -> Transparent window has an opacity slider (10-100%). It
-  changes the window live while you drag and saves `windowOpacity` on release.
-  It is disabled when `claude-desktop-extra.jsonc` or `CLAUDE_WINDOW_OPACITY`
-  sets the value.
+- Settings -> Extra -> Transparent window has a **Transparency** slider (0-90%,
+  higher = more see-through). It changes the window live while you drag and
+  saves `windowTransparencyLevel` (default 0.2) on release; the env override is
+  `CLAUDE_WINDOW_TRANSPARENCY_LEVEL`. It is disabled when
+  `claude-desktop-extra.jsonc` or the env variable sets the value.
+- `windowOpacity` / `CLAUDE_WINDOW_OPACITY` are still read (as 1 - value);
+  saving from Settings replaces `windowOpacity` in the `.json` with the new key.
 - Turning the switch on or off shows a **Restart now** button: a see-through
   window can only be created at startup.
 

@@ -24,10 +24,11 @@
   var ipcRenderer = electron.ipcRenderer;
   if (!contextBridge || !ipcRenderer) return;
 
-  // The window opacity: a finite number in 0.1..1, nothing else.
-  function opacityOk(v) {
-    return typeof v === "number" && isFinite(v) && v >= 0.1 && v <= 1;
+  // The window transparency level: a finite number in 0..0.9, nothing else.
+  function levelOk(v) {
+    return typeof v === "number" && isFinite(v) && v >= 0 && v <= 0.9;
   }
+  var BAD_LEVEL = "transparency must be a number from 0 to 0.9";
 
   contextBridge.exposeInMainWorld("cdbExtra", {
     // __cdb_extra_bridge
@@ -168,17 +169,17 @@
     windowTransparencySet: function (enabled) {
       return ipcRenderer.invoke("cdb-wt:pref-set", enabled === true);
     },
-    // The opacity slider: preview() re-styles the window live and writes
-    // nothing, set() also saves windowOpacity. Both take only a finite number
-    // in 0.1..1 - anything else is refused here without an IPC round trip, and
-    // the main side re-validates and clamps.
-    windowOpacityPreview: function (value) {
-      if (!opacityOk(value)) return Promise.resolve({ ok: false, error: "opacity must be a number from 0.1 to 1" });
-      return ipcRenderer.invoke("cdb-wt:opacity-preview", value);
+    // The transparency slider: preview() re-styles the window live and writes
+    // nothing, set() also saves windowTransparencyLevel. Both take only a finite
+    // number in 0..0.9 - anything else is refused here without an IPC round
+    // trip, and the main side re-validates and clamps.
+    windowTransparencyLevelPreview: function (value) {
+      if (!levelOk(value)) return Promise.resolve({ ok: false, error: BAD_LEVEL });
+      return ipcRenderer.invoke("cdb-wt:level-preview", value);
     },
-    windowOpacitySet: function (value) {
-      if (!opacityOk(value)) return Promise.resolve({ ok: false, error: "opacity must be a number from 0.1 to 1" });
-      return ipcRenderer.invoke("cdb-wt:opacity-set", value);
+    windowTransparencyLevelSet: function (value) {
+      if (!levelOk(value)) return Promise.resolve({ ok: false, error: BAD_LEVEL });
+      return ipcRenderer.invoke("cdb-wt:level-set", value);
     },
 
     // Deployment mode (1P / 3P) and the third-party configuration the app boots
