@@ -595,6 +595,108 @@ async function featuresPanel(featuresItem) {
     window.__ntState = null;
   }
 
+  // --- Transparent window: the switch owes a restart and gets its own Restart
+  // now while it does; the opacity slider previews on input and saves on
+  // change, applies live only on a window built transparent, and refuses while
+  // the .jsonc or CLAUDE_WINDOW_OPACITY decides the value.
+  {
+    const wtSel = ".cdbx-switch[aria-label='make the main window transparent']";
+    featuresItem.click();
+    await sleep(200);
+    const p5 = document.querySelector(".cdbx-panel");
+    const wt = p5.querySelector(wtSel);
+    ok(!!wt, "renders the Transparent window switch");
+    if (wt) {
+      const wtRow = wt.closest(".cdbx-row");
+      const range = wtRow.querySelector("input[type=range]");
+      const val = function () { return wtRow.querySelector(".cdbx-range-val").textContent; };
+      const hint = function () { return wtRow.querySelector(".cdbx-range-hint").textContent; };
+      const rs = Array.from(wtRow.querySelectorAll(".cdbx-row-aside .cdbx-btn"))
+        .filter(function (b) { return b.textContent === "Restart now"; })[0];
+      ok(!!range && range.min === "10" && range.max === "100" && range.step === "5",
+         "the row carries a 10-100 % opacity slider in steps of 5");
+      ok(range && range.value === "80" && val() === "80%", "showing the saved 80 %: " + val());
+      ok(range && !range.disabled, "usable while nothing locks the value");
+      ok(hint() === "Saved now - applies once the transparent window is active",
+         "on an opaque window the slider says it saves for later: " + hint());
+      ok(!!rs && rs.classList.contains("cdbx-hide"), "a hidden Restart now sits next to the switch");
+
+      wt.click();
+      await sleep(80);
+      ok(window.__wtCalls && window.__wtCalls[0] === true, "the switch writes true");
+      ok(rs && !rs.classList.contains("cdbx-hide"), "after the flip the row offers Restart now");
+      ok(wtRow.querySelector(".cdbx-state").textContent === "on - see-through main window (restart to apply)",
+         "and its state line says a restart is owed: " + wtRow.querySelector(".cdbx-state").textContent);
+      const seen = window.__relaunchCalls;
+      rs.click();
+      await sleep(60);
+      ok(window.__relaunchCalls === seen + 1, "the row's Restart now relaunches the app");
+      window.__relaunchCalls = seen;
+      wt.click();
+      await sleep(80);
+      ok(rs.classList.contains("cdbx-hide"), "flipping back takes Restart now away again");
+
+      range.value = "50";
+      range.dispatchEvent(new Event("input"));
+      await sleep(40);
+      ok(val() === "50%", "dragging updates the label: " + val());
+      ok(!(window.__wopPreview || []).length, "no preview while the window is not transparent");
+      range.dispatchEvent(new Event("change"));
+      await sleep(60);
+      ok(window.__wopSet && window.__wopSet.length === 1 && window.__wopSet[0] === 0.5,
+         "releasing saves 0.5: " + JSON.stringify(window.__wopSet));
+    }
+
+    // Built transparent: input previews live, change saves.
+    window.__wtState = { ok: true, enabled: true, active: true, opacity: 0.6, opacitySource: "json", opacityLocked: false,
+      opacityEnvForced: false, lockedByJsonc: false, source: "json", envForced: false, nativeTitlebar: false };
+    window.__wopPreview = [];
+    window.__wopSet = [];
+    featuresItem.click();
+    await sleep(200);
+    const wtRow2 = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
+    const range2 = wtRow2.querySelector("input[type=range]");
+    ok(range2.value === "60" && wtRow2.querySelector(".cdbx-range-hint").textContent === "Applies live",
+       "a transparent window shows its saved 60 % and says the slider applies live");
+    ok(wtRow2.querySelector(".cdbx-row-aside .cdbx-btn").classList.contains("cdbx-hide"),
+       "no Restart now while the saved switch matches the window");
+    range2.value = "40";
+    range2.dispatchEvent(new Event("input"));
+    await sleep(40);
+    ok(window.__wopPreview.length >= 1 && window.__wopPreview[window.__wopPreview.length - 1] === 0.4,
+       "input previews the new alpha live: " + JSON.stringify(window.__wopPreview));
+    ok(window.__wopSet.length === 0, "and a preview saves nothing");
+    range2.dispatchEvent(new Event("change"));
+    await sleep(60);
+    ok(window.__wopSet.length === 1 && window.__wopSet[0] === 0.4, "change saves it: " + JSON.stringify(window.__wopSet));
+
+    // Locked by the .jsonc, then forced by the env var: disabled, with the why.
+    window.__wtState = Object.assign({}, window.__wtState, { opacitySource: "jsonc-locked", opacityLocked: true });
+    featuresItem.click();
+    await sleep(200);
+    let row3 = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
+    ok(row3.querySelector("input[type=range]").disabled &&
+       row3.querySelector(".cdbx-range-hint").textContent === "Set in claude-desktop-extra.jsonc - edit that file to change this",
+       "a .jsonc windowOpacity disables the slider and says where it is set");
+    window.__wtState = Object.assign({}, window.__wtState, { opacitySource: "env", opacityLocked: false, opacityEnvForced: true });
+    featuresItem.click();
+    await sleep(200);
+    row3 = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
+    ok(row3.querySelector("input[type=range]").disabled &&
+       /CLAUDE_WINDOW_OPACITY/.test(row3.querySelector(".cdbx-range-hint").textContent),
+       "CLAUDE_WINDOW_OPACITY disables it too, naming the variable");
+
+    // A switch forced by CLAUDE_WINDOW_TRANSPARENCY: no restart can close the gap.
+    window.__wtState = { ok: true, enabled: false, active: true, opacity: 0.8, opacitySource: "default", opacityLocked: false,
+      opacityEnvForced: false, lockedByJsonc: false, source: "default", envForced: true, nativeTitlebar: false };
+    featuresItem.click();
+    await sleep(200);
+    row3 = document.querySelector(".cdbx-panel").querySelector(wtSel).closest(".cdbx-row");
+    ok(row3.querySelector(".cdbx-row-aside .cdbx-btn").classList.contains("cdbx-hide"),
+       "no Restart now when CLAUDE_WINDOW_TRANSPARENCY decides the run");
+    window.__wtState = null;
+  }
+
   // Back to the default fixture for the rest of this walk-through. The panel
   // element itself is reused across renders, so the panel handle still points
   // at it - only the nodes captured above are gone, and everything below
@@ -646,19 +748,29 @@ async function featuresPanel(featuresItem) {
   // window is created) and large-session loading (the limits are handed to the
   // session manager when it is constructed at startup).
   const RESTART_ROWS = ["Hide window controls", "Native titlebar", "Load large sessions in full"];
+  // Transparent window is both: its switch needs a restart, its slider is live,
+  // and its note has to say each.
+  const MIXED_ROWS = ["Transparent window"];
   const rowNotes = Array.from(panel.querySelectorAll(".cdbx-row")).map(function (r) {
     return {
       title: r.querySelector(".cdbx-id").textContent,
       note: r.querySelector(".cdbx-note").textContent.toLowerCase()
     };
   });
-  const liveRows = rowNotes.filter(function (r) { return RESTART_ROWS.indexOf(r.title) < 0; });
+  const mixedRows = rowNotes.filter(function (r) { return MIXED_ROWS.indexOf(r.title) >= 0; });
+  const liveRows = rowNotes.filter(function (r) {
+    return RESTART_ROWS.indexOf(r.title) < 0 && MIXED_ROWS.indexOf(r.title) < 0;
+  });
   const restartRows = rowNotes.filter(function (r) { return RESTART_ROWS.indexOf(r.title) >= 0; });
   const missing = function (list, needle, want) {
     return list.filter(function (r) { return (r.note.indexOf(needle) >= 0) !== want; })
       .map(function (r) { return r.title; }).join(",");
   };
-  ok(liveRows.length === rowNotes.length - RESTART_ROWS.length && liveRows.length > 0,
+  ok(mixedRows.length === MIXED_ROWS.length && !missing(mixedRows, "applies live", true) &&
+     !missing(mixedRows, "after a restart", true),
+     "the mixed rows say both applies live and after a restart; these do not: " +
+     missing(mixedRows, "applies live", true) + missing(mixedRows, "after a restart", true));
+  ok(liveRows.length === rowNotes.length - RESTART_ROWS.length - MIXED_ROWS.length && liveRows.length > 0,
      "the panel is " + liveRows.length + " live rows plus the " + RESTART_ROWS.length + " restart-needing rows");
   ok(!missing(liveRows, "applies live", true),
      "every live row's note says it applies live; these do not: " + missing(liveRows, "applies live", true));
@@ -1823,6 +1935,13 @@ window.cdbExtra = {
   windowControlsSet: function (enabled) { window.__wcCalls = (window.__wcCalls || []).concat([enabled]); return Promise.resolve({ ok: true, enabled: enabled, path: "/tmp/window-controls.json" }); },
   nativeTitlebarRead: function () { return Promise.resolve(window.__ntState || { ok: true, enabled: false, active: false, lockedByJsonc: false, source: "default", envForced: false }); },
   nativeTitlebarSet: function (enabled) { window.__ntCalls = (window.__ntCalls || []).concat([enabled]); return Promise.resolve({ ok: true, enabled: enabled, path: "/tmp/window-controls.json" }); },
+  // Transparent window: the switch plus the live opacity slider. "active" is
+  // what this window was built with, the opacity* fields say who decides the
+  // value (.jsonc lock, CLAUDE_WINDOW_OPACITY) so the slider can refuse.
+  windowTransparencyRead: function () { return Promise.resolve(window.__wtState || { ok: true, enabled: false, active: false, opacity: 0.8, opacitySource: "default", opacityLocked: false, opacityEnvForced: false, lockedByJsonc: false, source: "default", envForced: false, nativeTitlebar: false }); },
+  windowTransparencySet: function (enabled) { window.__wtCalls = (window.__wtCalls || []).concat([enabled]); return Promise.resolve({ ok: true, enabled: enabled, path: "/tmp/wt.json" }); },
+  windowOpacityPreview: function (v) { window.__wopPreview = (window.__wopPreview || []).concat([v]); return Promise.resolve({ ok: true, opacity: v, live: 1 }); },
+  windowOpacitySet: function (v) { window.__wopSet = (window.__wopSet || []).concat([v]); return Promise.resolve({ ok: true, opacity: v, path: "/tmp/wt.json" }); },
   diffViewsRead: function () { return Promise.resolve(window.__diffViewsState); },
   diffViewsSet: function (enabled) {
     window.__diffViewsCalls.push(enabled);
@@ -1908,9 +2027,11 @@ for (const [name, fixture] of scenarios) {
   writeFileSync(file, html(fixture, name), "utf8");
   let dump = "";
   try {
+    // Virtual time, so the budget costs no wall clock: it only has to cover the
+    // sum of the driver's sleep() calls in the longest scenario.
     dump = execFileSync(CHROMIUM, [
       "--headless", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
-      "--window-size=1000,700", "--virtual-time-budget=6000",
+      "--window-size=1000,700", "--virtual-time-budget=10000",
       "--dump-dom", "file://" + file
     ], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
   } catch (e) {

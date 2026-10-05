@@ -24,6 +24,11 @@
   var ipcRenderer = electron.ipcRenderer;
   if (!contextBridge || !ipcRenderer) return;
 
+  // The window opacity: a finite number in 0.1..1, nothing else.
+  function opacityOk(v) {
+    return typeof v === "number" && isFinite(v) && v >= 0.1 && v <= 1;
+  }
+
   contextBridge.exposeInMainWorld("cdbExtra", {
     // __cdb_extra_bridge
     version: 1,
@@ -162,6 +167,18 @@
     },
     windowTransparencySet: function (enabled) {
       return ipcRenderer.invoke("cdb-wt:pref-set", enabled === true);
+    },
+    // The opacity slider: preview() re-styles the window live and writes
+    // nothing, set() also saves windowOpacity. Both take only a finite number
+    // in 0.1..1 - anything else is refused here without an IPC round trip, and
+    // the main side re-validates and clamps.
+    windowOpacityPreview: function (value) {
+      if (!opacityOk(value)) return Promise.resolve({ ok: false, error: "opacity must be a number from 0.1 to 1" });
+      return ipcRenderer.invoke("cdb-wt:opacity-preview", value);
+    },
+    windowOpacitySet: function (value) {
+      if (!opacityOk(value)) return Promise.resolve({ ok: false, error: "opacity must be a number from 0.1 to 1" });
+      return ipcRenderer.invoke("cdb-wt:opacity-set", value);
     },
 
     // Deployment mode (1P / 3P) and the third-party configuration the app boots

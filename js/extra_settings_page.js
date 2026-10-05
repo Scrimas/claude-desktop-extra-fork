@@ -1395,36 +1395,58 @@
     });
   }
 
-  // The main window's see-through mode. Constructor-only (transparent cannot be
-  // flipped on a built window), so like the two Window rows above it says
-  // "restart" in its note and toast; the opacity itself is the windowOpacity key
-  // in claude-desktop-extra.jsonc, and blur is the compositor's job.
+  // The main window's see-through mode. The switch is constructor-only
+  // (transparent cannot be flipped on a built window), so it says "restart" and,
+  // while a flip is still owed, carries its own "Restart now" next to the
+  // switch. The opacity slider below it is live: windowOpacityPreview re-styles
+  // the window while it is dragged, windowOpacitySet saves windowOpacity when it
+  // is released. Blur is the compositor's job.
   function renderWindowTransparencyRow(panel) {
-    return renderToggleRow(panel, {
+    var wtRes = null;
+    var restart = null;
+    var slider = null;
+
+    // Owed a restart: the saved switch differs from what this window was built
+    // with. Not when nothing had been built yet (active not a boolean), not when
+    // CLAUDE_WINDOW_TRANSPARENCY decides every run anyway, and not for an "on"
+    // the native titlebar blocks - a restart closes none of those gaps.
+    function syncRestart(on) {
+      if (!restart) return;
+      var owed = !!wtRes && typeof wtRes.active === "boolean" && wtRes.envForced !== true &&
+        !(on && wtRes.nativeTitlebar === true) && on !== wtRes.active;
+      restart.classList.toggle("cdbx-hide", !owed);
+    }
+
+    var row = renderToggleRow(panel, {
       section: "Window",
       title: "Transparent window",
       note: "Makes the main window see-through so the desktop - and any blur your compositor " +
         "(Hyprland, KWin, ...) applies behind it - shows through the sidebar and the chat area. " +
-        "How see-through is the \"windowOpacity\" key in claude-desktop-extra.jsonc (0.1 to 1, " +
-        "default 0.8). A transparent window has no minimize/maximize/close buttons and no shadow: " +
-        "close and maximize through your window manager (Alt+F4 and friends) and resize by dragging " +
-        "the outermost few pixels of the window. On X11 a compositor must be running, or the window " +
-        "turns black. Needs the integrated titlebar: it does nothing while the native titlebar is " +
-        "on. Takes effect after a restart.",
+        "The slider sets how opaque the surfaces stay and applies live. A transparent window has " +
+        "no minimize/maximize/close buttons and no shadow: close and maximize through your window " +
+        "manager (Alt+F4 and friends) and resize by dragging the outermost few pixels of the window. " +
+        "On X11 a compositor must be running, or the window turns black. Needs the integrated " +
+        "titlebar: it does nothing while the native titlebar is on. The switch takes effect after a restart.",
       ariaLabel: "make the main window transparent",
       read: "windowTransparencyRead",
       write: "windowTransparencySet",
       lockFile: "claude-desktop-extra.jsonc",
-      isOn: function (res) { return res.enabled === true; },
+      isOn: function (res) {
+        wtRes = res;
+        if (slider) slider.load(res);
+        return res.enabled === true;
+      },
+      // Called on the read and after every successful flip, so it is also where
+      // the row's Restart now button follows the switch.
       describe: function (on, res) {
+        syncRestart(on);
         if (res && res.envForced === true) {
           return "decided for this run by CLAUDE_WINDOW_TRANSPARENCY - saved: " + (on ? "on" : "off");
         }
         // The native titlebar won when this window was built, so `active` is
         // false and a restart alone would not apply it.
         if (on && res && res.nativeTitlebar === true) return "on - inactive while the native titlebar is on";
-        var pct = res && typeof res.opacity === "number" ? Math.round(res.opacity * 100) + "% opacity" : "";
-        var line = on ? "on" + (pct ? " - " + pct : "") : "off - opaque window";
+        var line = on ? "on - see-through main window" : "off - opaque window";
         if (res && typeof res.active === "boolean" && res.active !== on) line += " (restart to apply)";
         return line;
       },
@@ -1436,6 +1458,115 @@
       },
       errorPrefix: "Could not change the transparent window: "
     });
+    if (!row) return row;
+
+    var node = row.host.querySelector(".cdbx-row");
+    var aside = node && node.querySelector(".cdbx-row-aside");
+    if (aside && typeof api.appRelaunch === "function") {
+      restart = restartButton();
+      restart.classList.add("cdbx-hide");
+      aside.insertBefore(restart, aside.firstChild);
+    }
+    var main = node && node.querySelector(".cdbx-row-main");
+    if (main && typeof api.windowOpacityPreview === "function" && typeof api.windowOpacitySet === "function") {
+      slider = renderOpacitySlider(main);
+      if (wtRes) slider.load(wtRes);
+    }
+    return row;
+  }
+
+  // The opacity slider of the Transparent window row: 10-100 % in steps of 5.
+  // `input` previews (throttled to one call in flight plus the latest value),
+  // `change` saves. Disabled, with the reason, while the .jsonc or
+  // CLAUDE_WINDOW_OPACITY decides the value. Built disabled; load() fills it in
+  // from the row's read response.
+  function renderOpacitySlider(main) {
+    var wrap = el("div", "cdbx-range");
+    var input = el("input", "cdbx-range-input");
+    input.type = "range";
+    input.min = "10";
+    input.max = "100";
+    input.step = "5";
+    input.value = "80";
+    input.disabled = true;
+    input.setAttribute("aria-label", "transparent window opacity");
+    var value = el("span", "cdbx-range-val", "80%");
+    wrap.appendChild(el("span", "cdbx-range-label", "Opacity"));
+    wrap.appendChild(input);
+    wrap.appendChild(value);
+    main.appendChild(wrap);
+    var hint = el("div", "cdbx-state cdbx-range-hint", "");
+    main.appendChild(hint);
+
+    var res = null;
+    var saved = 0.8;
+    var inFlight = false;
+    var queued = null;
+
+    function pct(a) { return Math.round(a * 100); }
+    function show(a) { value.textContent = pct(a) + "%"; }
+    function current() { return Math.round(Number(input.value)) / 100; }
+    function live() { return !!res && res.active === true; }
+    function idleHint() {
+      return live() ? "Applies live" : "Saved now - applies once the transparent window is active";
+    }
+
+    // One preview in flight at a time; while it runs, only the newest value is
+    // kept, so a fast drag costs a handful of restyles, not one per pixel.
+    function preview(a) {
+      if (!live()) return;
+      if (inFlight) { queued = a; return; }
+      inFlight = true;
+      api.windowOpacityPreview(a).then(done, done);
+      function done() {
+        inFlight = false;
+        if (queued !== null) { var q = queued; queued = null; preview(q); }
+      }
+    }
+
+    input.addEventListener("input", function () {
+      var a = current();
+      show(a);
+      preview(a);
+    });
+    input.addEventListener("change", function () {
+      var a = current();
+      queued = null;
+      api.windowOpacitySet(a).then(function (r) {
+        if (failed(r)) {
+          input.value = String(pct(saved));
+          show(saved);
+          preview(saved);
+          toast("Could not change the opacity: " + reason(r), true);
+          return;
+        }
+        saved = typeof r.opacity === "number" ? r.opacity : a;
+        if (res) res.opacity = saved;
+        input.value = String(pct(saved));
+        show(saved);
+        hint.textContent = idleHint();
+        if (!live()) toast("Opacity " + pct(saved) + "% saved - it applies once the transparent window is active");
+      }, function (err) {
+        input.value = String(pct(saved));
+        show(saved);
+        toast("Could not change the opacity: " + (err && err.message ? err.message : String(err)), true);
+      });
+    });
+
+    return {
+      load: function (r) {
+        res = r;
+        if (typeof r.opacity === "number" && isFinite(r.opacity)) saved = r.opacity;
+        input.value = String(pct(saved));
+        show(saved);
+        var why = r.opacityEnvForced === true
+          ? "Set by CLAUDE_WINDOW_OPACITY - unset it to change this here"
+          : (r.opacityLocked === true ? "Set in claude-desktop-extra.jsonc - edit that file to change this" : "");
+        input.disabled = !!why;
+        input.title = why;
+        hint.textContent = why || idleHint();
+      }
+    };
   }
 
   // The mode that hands the whole titlebar back to the window manager. It wins
@@ -1480,21 +1611,10 @@
     });
   }
 
-  // The restart bar for the two window modes, built the way the Deployment
-  // panel's is: created hidden and shown only while the window you are looking
-  // at and the setting on disk disagree. That is the only moment it means
-  // anything, and it is what makes flipping a switch and flipping it straight
-  // back take the bar away again instead of leaving a nag behind.
-  function renderWindowRestartBar(panel) {
-    if (!api || typeof api.appRelaunch !== "function") return null;
-
-    var notice = el("div", "cdbx-notice cdbx-info cdbx-hide");
-    notice.appendChild(el("div", "cdbx-notice-title", "Restart Claude Desktop to apply"));
-    notice.appendChild(el("div", "cdbx-notice-body",
-      "A window's frame is fixed when the window is created, so the window mode you just chose is " +
-      "saved but not running yet. Quitting and reopening from your desktop launcher is the cleanest " +
-      "way: \"Restart now\" relaunches the app directly and so skips the launcher's systemd scope " +
-      "and environment."));
+  // The "Restart now" button every restart notice in this file carries (and the
+  // Transparent window row, in its aside): app.relaunch() through the bridge,
+  // and the button back with a toast when that fails.
+  function restartButton() {
     var restart = el("button", "cdbx-btn", "Restart now");
     restart.type = "button";
     restart.addEventListener("click", function () {
@@ -1512,6 +1632,25 @@
         toast("Could not restart: " + (err && err.message ? err.message : String(err)), true);
       });
     });
+    return restart;
+  }
+
+  // The restart bar for the two window modes, built the way the Deployment
+  // panel's is: created hidden and shown only while the window you are looking
+  // at and the setting on disk disagree. That is the only moment it means
+  // anything, and it is what makes flipping a switch and flipping it straight
+  // back take the bar away again instead of leaving a nag behind.
+  function renderWindowRestartBar(panel) {
+    if (!api || typeof api.appRelaunch !== "function") return null;
+
+    var notice = el("div", "cdbx-notice cdbx-info cdbx-hide");
+    notice.appendChild(el("div", "cdbx-notice-title", "Restart Claude Desktop to apply"));
+    notice.appendChild(el("div", "cdbx-notice-body",
+      "A window's frame is fixed when the window is created, so the window mode you just chose is " +
+      "saved but not running yet. Quitting and reopening from your desktop launcher is the cleanest " +
+      "way: \"Restart now\" relaunches the app directly and so skips the launcher's systemd scope " +
+      "and environment."));
+    var restart = restartButton();
     notice.appendChild(restart);
     panel.appendChild(notice);
     return notice;
@@ -2100,23 +2239,7 @@
       "Overrides are saved immediately, but most flags are read once at startup. " +
       "Quitting Claude Desktop and reopening it from your desktop launcher is the cleanest way: " +
       "\"Restart now\" relaunches the app directly and so skips the launcher's systemd scope and environment."));
-    var restart = el("button", "cdbx-btn", "Restart now");
-    restart.type = "button";
-    restart.addEventListener("click", function () {
-      restart.disabled = true;
-      restart.textContent = "Restarting...";
-      api.appRelaunch().then(function (res) {
-        if (failed(res)) {
-          restart.disabled = false;
-          restart.textContent = "Restart now";
-          toast("Could not restart: " + reason(res), true);
-        }
-      }, function (err) {
-        restart.disabled = false;
-        restart.textContent = "Restart now";
-        toast("Could not restart: " + (err && err.message ? err.message : String(err)), true);
-      });
-    });
+    var restart = restartButton();
     notice.appendChild(restart);
     panel.appendChild(notice);
 
@@ -2434,23 +2557,7 @@
       "The mode is chosen at startup, before any window exists. Quitting and reopening from your " +
       "desktop launcher is the cleanest way: \"Restart now\" relaunches the app directly and so skips " +
       "the launcher's systemd scope and environment."));
-    var restart = el("button", "cdbx-btn", "Restart now");
-    restart.type = "button";
-    restart.addEventListener("click", function () {
-      restart.disabled = true;
-      restart.textContent = "Restarting...";
-      api.appRelaunch().then(function (res) {
-        if (failed(res)) {
-          restart.disabled = false;
-          restart.textContent = "Restart now";
-          toast("Could not restart: " + reason(res), true);
-        }
-      }, function (err) {
-        restart.disabled = false;
-        restart.textContent = "Restart now";
-        toast("Could not restart: " + (err && err.message ? err.message : String(err)), true);
-      });
-    });
+    var restart = restartButton();
     notice.appendChild(restart);
     panel.appendChild(notice);
 

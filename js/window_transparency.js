@@ -6,6 +6,9 @@
  *   windowTransparency  bool    default false   (env CLAUDE_WINDOW_TRANSPARENCY=1|0)
  *   windowOpacity       number  default 0.8     (env CLAUDE_WINDOW_OPACITY=0.1..1)
  *
+ * Precedence for both: env > .jsonc (hand-owned, locks the Settings control)
+ * > .json (written by Settings -> Extra) > default.
+ *
  * What it does when on:
  *   1. The main BrowserWindow is created with transparent:true and a fully
  *      transparent backgroundColor: the patched options literal spreads
@@ -22,6 +25,9 @@
  *      surfaces (sidebar, bg-surface-N) an alpha of windowOpacity. Blur behind
  *      the window is the COMPOSITOR's job (Hyprland decoration:blur, KWin
  *      "Blur" effect, ...) - the app only has to stop being opaque.
+ *   4. The opacity slider in Settings -> Extra swaps that claude.ai stylesheet
+ *      live (insertCSS the new alpha, removeInsertedCSS the old key); only the
+ *      on/off switch needs a restart.
  *
  * Transparency needs a frameless window, so it is skipped (and logged) when the
  * native titlebar is in use (frame:true). Why the patch is a spread in the options
@@ -116,10 +122,17 @@
     if (typeof n !== "number" || !isFinite(n)) return ALPHA_DEFAULT;
     return Math.min(1, Math.max(ALPHA_MIN, n));
   }
-  function alpha() {
+  // CLAUDE_WINDOW_OPACITY as a number, or null when unset or not numeric (an
+  // unusable value falls through to the files, as it always has).
+  function envAlpha() {
     var raw;
-    try { raw = process.env.CLAUDE_WINDOW_OPACITY; } catch (e) { raw = undefined; }
-    if (raw !== undefined && raw !== "" && isFinite(parseFloat(raw))) return clampAlpha(parseFloat(raw));
+    try { raw = process.env.CLAUDE_WINDOW_OPACITY; } catch (e) { return null; }
+    if (raw === undefined || raw === null || raw === "" || !isFinite(parseFloat(raw))) return null;
+    return clampAlpha(parseFloat(raw));
+  }
+  function alpha() {
+    var env = envAlpha();
+    if (env !== null) return env;
     return clampAlpha(readKey(KEY_ALPHA, "number").value);
   }
   function savedOn() { return readKey(KEY_ON, "boolean").value === true; }
@@ -302,13 +315,82 @@
     return false;
   }
 
+  // ---- live opacity ----------------------------------------------------------
+  // Every claude.ai webContents that carries our see-through stylesheet, with
+  // the key insertCSS resolved to and the alpha it was built with. insertCSS is
+  // per-DOCUMENT, so a navigation (a new dom-ready) inserts afresh and replaces
+  // the stored key; the old key belonged to a document that is gone. Each entry
+  // runs its stylesheet work through its own promise chain, so a dom-ready and
+  // a burst of slider previews never interleave their insert/remove pairs, and
+  // every step builds from the LATEST wanted alpha - a burst of previews
+  // collapses to the last one instead of replaying each.
+  var styled = new Map();
+  // The alpha the stylesheet should carry now: a slider preview while one is
+  // being dragged, else the saved value.
+  var liveAlpha = null;
+  function wantAlpha() { return liveAlpha !== null ? liveAlpha : alpha(); }
+
+  function entryFor(wc) {
+    var e = styled.get(wc);
+    if (e) return e;
+    e = { key: null, alpha: null, chain: Promise.resolve() };
+    styled.set(wc, e);
+    try { wc.once("destroyed", function () { styled.delete(wc); }); } catch (err) {}
+    return e;
+  }
+  function settle(p) { return p.then(function () {}, function () {}); }
+
+  // dom-ready: a new document, so a fresh insert (no remove - the old key is
+  // not in this document).
+  function styleNewDocument(wc) {
+    var e = entryFor(wc);
+    e.chain = settle(e.chain.then(function () {
+      if (wc.isDestroyed()) return;
+      var a = wantAlpha();
+      return wc.insertCSS(buildCss(a)).then(function (key) { e.key = key; e.alpha = a; });
+    }));
+    return e.chain;
+  }
+  // Swap the stylesheet in place. The new sheet goes in BEFORE the old one comes
+  // out, so there is never a frame with neither (an opaque flash); same
+  // selectors, both !important, so the later-inserted sheet wins meanwhile.
+  function restyle(wc) {
+    var e = entryFor(wc);
+    e.chain = settle(e.chain.then(function () {
+      if (wc.isDestroyed() || e.key === null) return;
+      var a = wantAlpha();
+      if (a === e.alpha) return;
+      var old = e.key;
+      return wc.insertCSS(buildCss(a)).then(function (key) {
+        e.key = key;
+        e.alpha = a;
+        return wc.removeInsertedCSS(old);
+      });
+    }));
+    return e.chain;
+  }
+  // Re-style every live, styled webContents; answers how many carry the wanted
+  // alpha afterwards.
+  function applyLive() {
+    var jobs = [];
+    styled.forEach(function (e, wc) {
+      try {
+        if (wc.isDestroyed()) { styled.delete(wc); return; }
+        jobs.push(restyle(wc).then(function () { return e.key !== null && e.alpha === wantAlpha(); }));
+      } catch (err) {}
+    });
+    return Promise.all(jobs).then(function (r) {
+      return r.filter(function (x) { return x; }).length;
+    });
+  }
+
   _electron.app.on("web-contents-created", function (_ev, wc) {
     wc.on("dom-ready", function () {
       try {
         if (active !== true) return;
         var url = wc.getURL() || "";
         if (originAllowed(url)) {
-          if (!otherWindowOwns(wc)) wc.insertCSS(buildCss(alpha())).catch(function () {});
+          if (!otherWindowOwns(wc)) styleNewDocument(wc);
         } else if (isShell(url)) wc.insertCSS(SHELL_CSS).catch(function () {});
       } catch (e) {}
     });
@@ -324,9 +406,10 @@
     } catch (e) { return false; }
   }
 
-  // Writes ONLY the .json, tmp + rename, every other key preserved; refuses to
-  // touch a file it cannot parse instead of discarding the user's other settings.
-  function writeOn(value) {
+  // Writes ONE key of the .json (undefined deletes it), tmp + rename, every
+  // other key preserved; refuses to touch a file it cannot parse instead of
+  // discarding the user's other settings.
+  function writeKey(key, value) {
     var p = pathFor(JSON_NAME);
     if (!p) return { ok: false, error: "no userData path" };
     var raw = null;
@@ -344,7 +427,7 @@
       }
       if (s !== raw) { try { _fs.writeFileSync(p + ".cdb-bak", raw, { flag: "wx" }); } catch (e3) {} }
     }
-    if (value === false) delete cfg[KEY_ON]; else cfg[KEY_ON] = true;
+    if (value === undefined) delete cfg[key]; else cfg[key] = value;
     var tmp = p + ".cdb-tmp";
     try {
       _fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + "\n", "utf8");
@@ -356,21 +439,70 @@
     return { ok: true, path: p };
   }
 
+  // Where the opacity comes from: "env", "jsonc-locked", "json" or "default".
+  function opacitySource() {
+    if (envAlpha() !== null) return "env";
+    return readKey(KEY_ALPHA, "number").source;
+  }
+  // Why Settings may not change the opacity right now, or null.
+  function opacityRefusal() {
+    var src = opacitySource();
+    if (src === "env") return "CLAUDE_WINDOW_OPACITY is set - unset it to change the opacity here";
+    if (src === "jsonc-locked") return KEY_ALPHA + " is set in " + JSONC_NAME + " - edit that file to change it";
+    return null;
+  }
+  // A finite number, clamped to 0.1..1 and rounded to 0.001; null otherwise.
+  function opacityArg(v) {
+    if (typeof v !== "number" || !isFinite(v)) return null;
+    return Math.round(clampAlpha(v) * 1000) / 1000;
+  }
+  var BAD_OPACITY = "opacity must be a number from " + ALPHA_MIN + " to 1";
+
   var ipc = _electron.ipcMain;
   ipc.handle("cdb-wt:pref-read", function (ev) {
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
     var disk = readKey(KEY_ON, "boolean");
     var env = envOn();
+    var oSrc = opacitySource();
     return {
       ok: true,
       enabled: disk.value === true,
       active: active,
       opacity: alpha(),
+      opacitySource: oSrc,
+      opacityLocked: oSrc === "jsonc-locked",
+      opacityEnvForced: oSrc === "env",
       lockedByJsonc: disk.source === "jsonc-locked",
       source: disk.source,
       envForced: env !== null,
       nativeTitlebar: nativeTitlebar()
     };
+  });
+  // Slider dragged: re-style the window, write nothing. `live` is how many
+  // webContents now carry the new alpha (0 while the window is not transparent).
+  ipc.handle("cdb-wt:opacity-preview", function (ev, value) {
+    if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
+    var a = opacityArg(value);
+    if (a === null) return { ok: false, error: BAD_OPACITY };
+    var no = opacityRefusal();
+    if (no) return { ok: false, error: no };
+    if (active !== true) return { ok: true, opacity: a, active: active, live: 0 };
+    liveAlpha = a;
+    return applyLive().then(function (n) { return { ok: true, opacity: a, active: active, live: n }; });
+  });
+  // Slider released: persist windowOpacity to the .json, then re-style.
+  ipc.handle("cdb-wt:opacity-set", function (ev, value) {
+    if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
+    var a = opacityArg(value);
+    if (a === null) return { ok: false, error: BAD_OPACITY };
+    var no = opacityRefusal();
+    if (no) return { ok: false, error: no };
+    var w = writeKey(KEY_ALPHA, a);
+    if (!w.ok) return w;
+    liveAlpha = null;
+    log("pref " + KEY_ALPHA + " set to " + a + " (" + w.path + ")" + (active === true ? " - applied live" : ""));
+    if (active !== true) return { ok: true, opacity: a, active: active, live: 0, path: w.path };
+    return applyLive().then(function (n) { return { ok: true, opacity: a, active: active, live: n, path: w.path }; });
   });
   ipc.handle("cdb-wt:pref-set", function (ev, enabled) {
     if (!okSender(ev)) return { ok: false, error: "rejected: unrecognized sender" };
@@ -378,7 +510,7 @@
     if (readKey(KEY_ON, "boolean").source === "jsonc-locked") {
       return { ok: false, error: KEY_ON + " is set in " + JSONC_NAME + " - edit that file to change it" };
     }
-    var w = writeOn(enabled);
+    var w = writeKey(KEY_ON, enabled ? true : undefined);
     if (!w.ok) return w;
     log("pref " + KEY_ON + " set to " + enabled + " (" + w.path + ") - takes effect on restart");
     return { ok: true, enabled: enabled, path: w.path };

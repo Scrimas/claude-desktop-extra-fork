@@ -442,6 +442,43 @@
   opacity: 0.38;
 }
 
+/* The Transparent window row's opacity slider: label, range, percentage on one
+ * line under the note. accent-color keeps the thumb and track in the panel's
+ * own ink, like the switch. */
+.cdbx-range {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 7px;
+  font-size: 12px;
+}
+
+.cdbx-range-label {
+  opacity: 0.66;
+}
+
+.cdbx-range-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 260px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: currentColor;
+}
+
+.cdbx-range-input[disabled] {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.cdbx-range-val {
+  min-width: 3.5em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
 .cdbx-clear {
   padding: 2px 7px;
   font: inherit;
