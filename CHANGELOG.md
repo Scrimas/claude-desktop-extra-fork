@@ -2,6 +2,30 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-10-05
+
+### Transparent window: live opacity slider
+
+- Settings -> Extra -> Transparent window has an opacity slider (10-100%). It
+  changes the window live while you drag and saves `windowOpacity` on release.
+  It is disabled when `claude-desktop-extra.jsonc` or `CLAUDE_WINDOW_OPACITY`
+  sets the value.
+- Turning the switch on or off shows a **Restart now** button: a see-through
+  window can only be created at startup.
+
+### Fixes (thanks @rmbruntz, #264)
+
+- The Extra settings tabs no longer hide the whole content pane. On the current
+  claude.ai markup the scrolling body sits under a `display: contents` wrapper
+  and a flex column instead of directly in the pane, so the search found nothing
+  and took over the entire pane: the close button went with it, and the panel
+  sat on the dialog card instead of on the pane's own background. The search now
+  goes down through wrappers, and only the scrolling body is replaced.
+- Transparent window: dialog cards, the Settings modal among them, stay solid.
+  They share their classes with the Claude Code content card, which fades with
+  the window, so the page behind showed through anything mounted directly on a
+  dialog.
+
 ## 2026-10-04
 
 ### Load large sessions in full (thanks @rmbruntz, #263)
@@ -24,16 +48,6 @@ All notable changes to the claude-desktop-extra packages will be documented in t
   the log was ready and got lost.
 - `scripts/validate-patches.sh` applies patches in the build's order, so a patch
   that builds on an earlier one validates the same way it builds.
-- The Extra settings tabs no longer hide the whole content pane. On the current
-  claude.ai markup the scrolling body sits under a `display: contents` wrapper
-  and a flex column instead of directly in the pane, so the search found nothing
-  and took over the entire pane: the close button went with it, and the panel
-  sat on the dialog card instead of on the pane's own background. The search now
-  goes down through wrappers, and only the scrolling body is replaced.
-- Transparent window: dialog cards, the Settings modal among them, stay solid.
-  They share their classes with the Claude Code content card, which fades with
-  the window, so the page behind showed through anything mounted directly on a
-  dialog.
 
 ## 2026-10-03
 
